@@ -92,6 +92,7 @@ gigi status
 | `GIGI_GRADE_THRESHOLD`| auto (`1.0` rerank / `0.4` cosine)   | Relevance cutoff for grading         |
 | `GIGI_CHUNK_SIZE`     | `800`                                | Chunk size in characters             |
 | `GIGI_CHUNK_OVERLAP`  | `100`                                | Chunk overlap in characters          |
+| `GIGI_EMBED_BATCH_SIZE`| `32`                                 | Chunks embedded per progress step   |
 | `GIGI_LLM`            | `ollama`                             | `ollama` \| `openai` \| `stub`       |
 | `GIGI_OLLAMA_URL`     | `http://localhost:11434`             | Ollama server                        |
 | `GIGI_OLLAMA_MODEL`   | `llama3.2`                           | Ollama model                         |

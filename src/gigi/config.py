@@ -28,6 +28,7 @@ class Settings:
     rerank_top_k: int = 3
     chunk_size: int = 800
     chunk_overlap: int = 100
+    embed_batch_size: int = 32
     grade_threshold: float | None = None
     llm_kind: str = "ollama"
     ollama_url: str = "http://localhost:11434"
@@ -53,6 +54,7 @@ class Settings:
             rerank_top_k=int(os.environ.get("GIGI_RERANK_TOP_K", cls.rerank_top_k)),
             chunk_size=int(os.environ.get("GIGI_CHUNK_SIZE", cls.chunk_size)),
             chunk_overlap=int(os.environ.get("GIGI_CHUNK_OVERLAP", cls.chunk_overlap)),
+            embed_batch_size=int(os.environ.get("GIGI_EMBED_BATCH_SIZE", cls.embed_batch_size)),
             grade_threshold=(
                 float(os.environ["GIGI_GRADE_THRESHOLD"])
                 if os.environ.get("GIGI_GRADE_THRESHOLD")

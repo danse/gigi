@@ -6,7 +6,15 @@ from pathlib import Path
 from typing import Annotated
 
 import numpy as np
+import torch
 import typer
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
 from gigi import __version__
 from gigi.agent.graph import build_graph, run_agent
@@ -38,13 +46,32 @@ def index(root: Annotated[Path, typer.Argument(help="Directory of documents to i
     """Build (or rebuild) the embedding index from a document folder."""
     settings = Settings.from_env()
     store = IndexStore(settings.index_dir)
+    typer.echo(f"Scanning {root} for documents...")
     chunks = load_documents(root, chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
     if not chunks:
         typer.secho(f"no supported documents found under {root}", fg=typer.colors.RED)
         raise typer.Exit(1)
     embedder = Embedder(settings.embed_model)
-    typer.echo(f"Chunking {len(chunks)} chunks...")
-    embeddings = embedder.encode([c.text for c in chunks]).cpu().numpy().astype(np.float32)
+    typer.echo(f"Found {len(chunks)} chunks; embedding with {settings.embed_model}...")
+    batch_size = settings.embed_batch_size
+    embedded = []
+    progress = Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+    )
+    with progress:
+        task = progress.add_task("Embedding", total=len(chunks))
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start : start + batch_size]
+            embedded.append(embedder.encode([c.text for c in batch]))
+            progress.update(
+                task,
+                advance=len(batch),
+                description=f"Embedding {batch[-1].source}",
+            )
+    embeddings = torch.cat(embedded).cpu().numpy().astype(np.float32)
     store.clear()
     manifest = store.save(chunks, embeddings, settings.embed_model)
     typer.secho(
