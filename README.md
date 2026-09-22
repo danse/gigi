@@ -7,17 +7,23 @@ embeds your docs and query, torch does cosine-similarity retrieval, a PyTorch
 cross-encoder reranks the candidates, and a LangGraph agent retrieves → grades →
 generates a grounded answer (with a self-correction loop) via a local Ollama LLM.
 
+`gigi index` also clusters the embeddings into topics. Overview questions such as
+`gigi ask "what are these documents about?"` use those cluster representatives
+instead of nearest-neighbor search, so a large index can still be summarized.
+
 ```
-gigi index examples/docs     # build the embedding index
+gigi index examples/docs     # build the embedding index + topic clusters
 gigi ask "How do I deploy the app?"
+gigi ask "what are these documents about?"
 ```
 
 ## What makes it tick
 
 - **PyTorch retrieval stack**
-  - Embeddings: `BAAI/bge-small-en-v1.5` (sentence-transformers)
+  - Embeddings: `BAAI/bge-small-en-v1.5` (sentence-transformers; BGE query instruction applied)
   - Reranker: `cross-encoder/ms-marco-MiniLM-L-6-v2` (CrossEncoder)
-  - Top-k via cosine similarity computed with `torch.matmul`
+  - Top-k via cosine similarity + MMR, computed with `torch.matmul`
+  - Spherical k-means over the index (`clusters.json`) for corpus-overview questions
 - **LangGraph agent** (`src/gigi/agent/graph.py`)
   - `retrieve → grade → generate`, with a conditional edge that bails out to a
     "no answer" node when nothing clears the relevance threshold, and a retry
@@ -75,6 +81,9 @@ gigi index examples/docs
 # Ask a question (answer + cited sources)
 gigi ask "What is the deployment process?"
 
+# Summarize the index (uses topic clusters, not query nearest-neighbors)
+gigi ask "what are these documents about?"
+
 # Inspect the index
 gigi status
 ```
@@ -87,9 +96,10 @@ gigi status
 | `GIGI_EMBED_MODEL`    | `BAAI/bge-small-en-v1.5`             | Sentence-transformer for embeddings  |
 | `GIGI_RERANK_MODEL`   | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder reranker            |
 | `GIGI_RERANK`         | `1`                                  | Enable the reranker (`0` to disable) |
-| `GIGI_TOP_K`          | `6`                                  | Candidates retrieved before rerank   |
-| `GIGI_RERANK_TOP_K`   | `3`                                  | Candidates kept after rerank         |
-| `GIGI_GRADE_THRESHOLD`| auto (`1.0` rerank / `0.4` cosine)   | Relevance cutoff for grading         |
+| `GIGI_TOP_K`          | `16`                                 | Candidates retrieved before rerank   |
+| `GIGI_RERANK_TOP_K`   | `8`                                  | Candidates kept after rerank         |
+| `GIGI_N_CLUSTERS`     | `16`                                 | Topic clusters built at index time   |
+| `GIGI_GRADE_THRESHOLD`| auto (off when rerank / `0.3` cosine)| Relevance cutoff; unset keeps reranked hits |
 | `GIGI_CHUNK_SIZE`     | `800`                                | Chunk size in characters             |
 | `GIGI_CHUNK_OVERLAP`  | `100`                                | Chunk overlap in characters          |
 | `GIGI_EMBED_BATCH_SIZE`| `32`                                 | Chunks embedded per progress step   |

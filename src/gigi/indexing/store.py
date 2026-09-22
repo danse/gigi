@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
+from gigi.indexing.cluster import ClusterRecord, build_clusters
 from gigi.indexing.loader import Chunk
 
 
@@ -64,16 +65,28 @@ class IndexStore:
         self.chunks_file = self.index_dir / "chunks.jsonl"
         self.embeddings_file = self.index_dir / "embeddings.npy"
         self.manifest_file = self.index_dir / "manifest.json"
+        self.clusters_file = self.index_dir / "clusters.json"
 
     def exists(self) -> bool:
         return all(p.is_file() for p in (self.chunks_file, self.embeddings_file, self.manifest_file))
 
-    def save(self, chunks: list[Chunk], embeddings: np.ndarray, model_name: str) -> IndexManifest:
+    def save(
+        self,
+        chunks: list[Chunk],
+        embeddings: np.ndarray,
+        model_name: str,
+        n_clusters: int = 16,
+    ) -> IndexManifest:
         self.index_dir.mkdir(parents=True, exist_ok=True)
         with self.chunks_file.open("w", encoding="utf-8") as fh:
             for chunk in chunks:
                 fh.write(json.dumps(chunk.as_dict(), ensure_ascii=False) + "\n")
         np.save(self.embeddings_file, embeddings)
+        clusters = build_clusters(chunks, embeddings, n_clusters=n_clusters)
+        self.clusters_file.write_text(
+            json.dumps({"n_clusters": len(clusters), "clusters": [c.as_dict() for c in clusters]}, indent=2),
+            encoding="utf-8",
+        )
         manifest = IndexManifest(
             model_name=model_name,
             dimension=int(embeddings.shape[1]),
@@ -82,6 +95,12 @@ class IndexStore:
         )
         self.manifest_file.write_text(json.dumps(manifest.as_dict(), indent=2))
         return manifest
+
+    def load_clusters(self) -> list[ClusterRecord]:
+        if not self.clusters_file.is_file():
+            return []
+        data = json.loads(self.clusters_file.read_text(encoding="utf-8"))
+        return [ClusterRecord.from_dict(d) for d in data.get("clusters", [])]
 
     def load(self) -> tuple[list[Chunk], np.ndarray, IndexManifest]:
         if not self.exists():

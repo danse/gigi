@@ -21,12 +21,16 @@ def test_store_roundtrip(tmp_path):
         Chunk(source="a.md", text="alpha", heading="A", idx=0),
         Chunk(source="b.md", text="beta", heading="B", idx=1),
     ]
-    store.save(chunks, _embeddings(2), "test-model")
+    embeddings_in = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    store.save(chunks, embeddings_in, "test-model")
     loaded, embeddings, manifest = store.load()
     assert [c.text for c in loaded] == ["alpha", "beta"]
     assert embeddings.shape == (2, 2)
     assert manifest.n_chunks == 2
     assert manifest.model_name == "test-model"
+    clusters = store.load_clusters()
+    assert len(clusters) == 2
+    assert sum(c.size for c in clusters) == 2
 
 
 def test_store_roundtrip_unicode_line_separators(tmp_path):

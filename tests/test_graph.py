@@ -9,6 +9,7 @@ from gigi.agent.graph import build_graph, run_agent
 from gigi.agent.llm import StubLLM
 from gigi.agent.nodes import Services
 from gigi.config import Settings
+from gigi.indexing.cluster import ClusterRecord
 from gigi.indexing.loader import Chunk
 from gigi.indexing.store import IndexManifest
 
@@ -26,6 +27,20 @@ MISSING_MANIFEST = IndexManifest("test", 2, "2026-01-01T00:00:00Z", len(CHUNKS))
 class FakeStore:
     def load(self):
         return CHUNKS, EMBEDDINGS, MISSING_MANIFEST
+
+    def load_clusters(self):
+        return [
+            ClusterRecord(id=0, centroid_idx=0, size=10, heading="Deployment", source="deployment.md"),
+            ClusterRecord(id=1, centroid_idx=1, size=4, heading="Setup", source="onboarding.md"),
+        ]
+
+
+class FakeReranker:
+    def rerank(self, query, chunks, top_k=None):
+        ranked = [(c, 0.2) for c in chunks]
+        if top_k is not None:
+            ranked = ranked[:top_k]
+        return ranked
 
 
 class FakeEmbedder:
@@ -89,3 +104,25 @@ def test_graph_retries_when_answer_not_grounded():
     assert result["attempt"] == 2
     assert result["grounded"] is True
     assert "deploy.sh" in result["answer"]
+
+
+def test_graph_overview_uses_cluster_representatives():
+    services = make_services([0.0, 0.0])
+    graph = build_graph(services)
+    result = run_agent(graph, "what are these documents about?")
+    assert result["overview"] is True
+    assert {c["source"] for c in result["relevant"]} == {"deployment.md", "onboarding.md"}
+    assert result["answer"]
+
+
+def test_rerank_keeps_hits_below_old_logit_threshold():
+    services = Services(
+        settings=Settings(rerank_enabled=True, max_attempts=1),
+        store=FakeStore(),
+        embedder=FakeEmbedder([1.0, 0.0]),
+        llm=StubLLM(),
+        reranker=FakeReranker(),
+    )
+    result = run_agent(build_graph(services), "How do I deploy to production?")
+    assert result["relevant"], "rerank logits of 0.2 used to be dropped by grade threshold 1.0"
+    assert result["overview"] is False

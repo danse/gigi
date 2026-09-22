@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from gigi.indexing.loader import Chunk, chunk_text
-from gigi.retrieval.search import similarity_scores, top_k
+from gigi.retrieval.search import mmr_top_k, similarity_scores, top_k
 
 
 def test_chunk_text_tracks_headings():
@@ -39,3 +39,31 @@ def test_top_k_ordering():
     results = top_k(chunks, embeddings, query, k=2)
     assert [c.source for c, _ in results] == ["b", "c"]
     assert results[0][1] > results[1][1]
+
+
+def test_chunk_text_skips_heading_only_stubs():
+    text = (
+        "# Architecture\n\n"
+        "## Overview\n\n"
+        "The platform is a three-tier app.\n\n"
+        "## Backend\n\n"
+        "The API is FastAPI.\n"
+    )
+    chunks = chunk_text(text, "doc.md", size=800, overlap=50)
+    assert chunks
+    assert all("tier" in c.text or "FastAPI" in c.text for c in chunks)
+    assert any("three-tier" in c.text for c in chunks)
+    assert any("FastAPI" in c.text for c in chunks)
+
+
+def test_mmr_top_k_keeps_best_hit_first():
+    chunks = [
+        Chunk(source="a", text="near duplicate 1"),
+        Chunk(source="a", text="near duplicate 2"),
+        Chunk(source="b", text="other topic"),
+    ]
+    embeddings = np.array([[1.0, 0.0], [0.99, 0.01], [0.0, 1.0]], dtype=np.float32)
+    query = torch.tensor([1.0, 0.0])
+    results = mmr_top_k(chunks, embeddings, query, k=2, pool_k=3, lambda_=0.3)
+    assert results[0][0].source == "a"
+    assert {c.source for c, _ in results} == {"a", "b"}

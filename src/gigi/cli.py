@@ -73,10 +73,11 @@ def index(root: Annotated[Path, typer.Argument(help="Directory of documents to i
             )
     embeddings = torch.cat(embedded).cpu().numpy().astype(np.float32)
     store.clear()
-    manifest = store.save(chunks, embeddings, settings.embed_model)
+    manifest = store.save(chunks, embeddings, settings.embed_model, n_clusters=settings.n_clusters)
+    n_topics = len(store.load_clusters())
     typer.secho(
-        f"Indexed {manifest.n_chunks} chunks ({manifest.dimension}-dim embeddings) "
-        f"with {manifest.model_name} into {store.index_dir}",
+        f"Indexed {manifest.n_chunks} chunks ({manifest.dimension}-dim embeddings, "
+        f"{n_topics} topics) with {manifest.model_name} into {store.index_dir}",
         fg=typer.colors.GREEN,
     )
 
@@ -115,13 +116,19 @@ def status() -> None:
         typer.secho("No index found. Run `gigi index <dir>` first.", fg=typer.colors.YELLOW)
         raise typer.Exit(1)
     chunks, _, manifest = store.load()
+    clusters = store.load_clusters()
     sources = sorted({c.source for c in chunks})
     typer.echo(f"Index dir : {store.index_dir}")
     typer.echo(f"Chunks    : {manifest.n_chunks}")
+    typer.echo(f"Topics    : {len(clusters)}")
     typer.echo(f"Embed dim : {manifest.dimension}")
     typer.echo(f"Model     : {manifest.model_name}")
     typer.echo(f"Created   : {manifest.created_at}")
     typer.echo(f"Files     : {len(sources)}")
+    if clusters:
+        typer.echo("Top topics:")
+        for cluster in clusters[:8]:
+            typer.echo(f"  • {cluster.heading or cluster.source}  ({cluster.size} chunks)")
 
 
 @app.command()

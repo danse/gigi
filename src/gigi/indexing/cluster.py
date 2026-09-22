@@ -1,0 +1,124 @@
+"""Spherical k-means over L2-normalized embeddings (index-time topic map)."""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from gigi.indexing.loader import Chunk
+
+
+@dataclass
+class ClusterRecord:
+    id: int
+    centroid_idx: int
+    size: int
+    heading: str
+    source: str
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "centroid_idx": self.centroid_idx,
+            "size": self.size,
+            "heading": self.heading,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ClusterRecord:
+        return cls(
+            id=int(d["id"]),
+            centroid_idx=int(d["centroid_idx"]),
+            size=int(d["size"]),
+            heading=str(d.get("heading", "")),
+            source=str(d.get("source", "")),
+        )
+
+
+def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    return matrix / np.clip(norms, 1e-12, None)
+
+
+def _kmeans_pp_cosine(matrix: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+    n = matrix.shape[0]
+    centers = np.empty((k, matrix.shape[1]), dtype=np.float32)
+    centers[0] = matrix[int(rng.integers(n))]
+    min_sim = matrix @ centers[0]
+    for i in range(1, k):
+        dist = np.clip(1.0 - min_sim, 1e-12, None)
+        total = float(dist.sum())
+        if total <= 0:
+            idx = int(rng.integers(n))
+        else:
+            idx = int(rng.choice(n, p=(dist / total).astype(np.float64)))
+        centers[i] = matrix[idx]
+        min_sim = np.maximum(min_sim, matrix @ centers[i])
+    return _l2_normalize(centers)
+
+
+def spherical_kmeans(
+    embeddings: np.ndarray,
+    k: int,
+    n_iter: int = 15,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (n,) labels and (k, dim) L2-normalized centers."""
+    matrix = _l2_normalize(np.asarray(embeddings, dtype=np.float32))
+    n = matrix.shape[0]
+    k = min(max(k, 1), n)
+    rng = np.random.default_rng(seed)
+    centers = _kmeans_pp_cosine(matrix, k, rng)
+    labels = np.zeros(n, dtype=np.int32)
+    for _ in range(n_iter):
+        labels = (matrix @ centers.T).argmax(axis=1).astype(np.int32)
+        new_centers = np.zeros_like(centers)
+        for j in range(k):
+            members = matrix[labels == j]
+            if members.shape[0] == 0:
+                new_centers[j] = matrix[int(rng.integers(n))]
+            else:
+                new_centers[j] = members.mean(axis=0)
+        centers = _l2_normalize(new_centers)
+    labels = (matrix @ centers.T).argmax(axis=1).astype(np.int32)
+    return labels, centers
+
+
+def build_clusters(
+    chunks: list[Chunk],
+    embeddings: np.ndarray,
+    n_clusters: int = 16,
+    seed: int = 0,
+) -> list[ClusterRecord]:
+    """Cluster embeddings and pick the chunk nearest each center as representative."""
+    n = len(chunks)
+    if n == 0:
+        return []
+    k = min(n_clusters, n)
+    labels, centers = spherical_kmeans(embeddings, k, seed=seed)
+    matrix = _l2_normalize(np.asarray(embeddings, dtype=np.float32))
+    records: list[ClusterRecord] = []
+    for j in range(len(centers)):
+        mask = np.flatnonzero(labels == j)
+        if mask.size == 0:
+            continue
+        nearest = int(mask[int((matrix[mask] @ centers[j]).argmax())])
+        members = [chunks[int(i)] for i in mask]
+        heading = Counter(c.heading or Path(c.source).name for c in members).most_common(1)[0][0]
+        records.append(
+            ClusterRecord(
+                id=len(records),
+                centroid_idx=nearest,
+                size=int(mask.size),
+                heading=heading,
+                source=chunks[nearest].source,
+            )
+        )
+    records.sort(key=lambda r: r.size, reverse=True)
+    for i, rec in enumerate(records):
+        rec.id = i
+    return records

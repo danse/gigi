@@ -24,8 +24,9 @@ class Settings:
     embed_model: str = "BAAI/bge-small-en-v1.5"
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_enabled: bool = True
-    top_k: int = 6
-    rerank_top_k: int = 3
+    top_k: int = 16
+    rerank_top_k: int = 8
+    n_clusters: int = 16
     chunk_size: int = 800
     chunk_overlap: int = 100
     embed_batch_size: int = 32
@@ -38,10 +39,13 @@ class Settings:
     openai_model: str = ""
     max_attempts: int = 2
 
-    def resolve_grade_threshold(self) -> float:
+    def resolve_grade_threshold(self) -> float | None:
+        """None means keep every retrieved chunk (reranker already truncated)."""
         if self.grade_threshold is not None:
             return self.grade_threshold
-        return 1.0 if self.rerank_enabled else 0.4
+        if self.rerank_enabled:
+            return None
+        return 0.3
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -52,6 +56,7 @@ class Settings:
             rerank_enabled=_env_bool("GIGI_RERANK", cls.rerank_enabled),
             top_k=int(os.environ.get("GIGI_TOP_K", cls.top_k)),
             rerank_top_k=int(os.environ.get("GIGI_RERANK_TOP_K", cls.rerank_top_k)),
+            n_clusters=int(os.environ.get("GIGI_N_CLUSTERS", cls.n_clusters)),
             chunk_size=int(os.environ.get("GIGI_CHUNK_SIZE", cls.chunk_size)),
             chunk_overlap=int(os.environ.get("GIGI_CHUNK_OVERLAP", cls.chunk_overlap)),
             embed_batch_size=int(os.environ.get("GIGI_EMBED_BATCH_SIZE", cls.embed_batch_size)),

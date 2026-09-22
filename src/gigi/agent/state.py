@@ -12,3 +12,4 @@ class GraphState(TypedDict, total=False):
     answer: str
     grounded: bool
     attempt: int
+    overview: bool

@@ -5,10 +5,12 @@ from __future__ import annotations
 from gigi.agent.llm import LLM
 from gigi.agent.prompts import build_messages
 from gigi.config import Settings
+from gigi.indexing.cluster import ClusterRecord, build_clusters
 from gigi.indexing.embedder import Embedder
 from gigi.indexing.store import IndexStore
+from gigi.retrieval.overview import is_overview_query
 from gigi.retrieval.rerank import Reranker
-from gigi.retrieval.search import top_k
+from gigi.retrieval.search import mmr_top_k
 
 
 class Services:
@@ -33,11 +35,32 @@ def _chunk_dict(source: str, text: str, heading: str, score: float) -> dict:
     return {"source": source, "text": text, "heading": heading, "score": score}
 
 
+def _overview_chunks(services: Services, chunks, embeddings) -> list[dict]:
+    loader = getattr(services.store, "load_clusters", None)
+    clusters: list[ClusterRecord] = loader() if callable(loader) else []
+    if not clusters:
+        clusters = build_clusters(chunks, embeddings, n_clusters=services.settings.n_clusters)
+    n = max(len(chunks), 1)
+    retrieved = []
+    for cluster in clusters:
+        if cluster.centroid_idx < 0 or cluster.centroid_idx >= len(chunks):
+            continue
+        chunk = chunks[cluster.centroid_idx]
+        retrieved.append(
+            _chunk_dict(chunk.source, chunk.text, cluster.heading, cluster.size / n)
+        )
+    return retrieved
+
+
 def make_retrieve_node(services: Services):
     def retrieve(state: dict) -> dict:
         chunks, embeddings, _ = services.store.load()
+        overview = is_overview_query(state["question"])
+        if overview:
+            return {"retrieved": _overview_chunks(services, chunks, embeddings), "overview": True}
+
         query_emb = services.embedder.encode_one(state["question"])
-        candidates = top_k(chunks, embeddings, query_emb, k=services.settings.top_k)
+        candidates = mmr_top_k(chunks, embeddings, query_emb, k=services.settings.top_k)
         if services.reranker is not None:
             reranked = services.reranker.rerank(
                 state["question"],
@@ -48,15 +71,20 @@ def make_retrieve_node(services: Services):
         retrieved = [
             _chunk_dict(c.source, c.text, c.heading, score) for c, score in candidates
         ]
-        return {"retrieved": retrieved}
+        return {"retrieved": retrieved, "overview": False}
 
     return retrieve
 
 
 def make_grade_node(settings: Settings):
     def grade(state: dict) -> dict:
+        retrieved = state.get("retrieved") or []
+        if state.get("overview"):
+            return {"relevant": retrieved}
         threshold = settings.resolve_grade_threshold()
-        relevant = [r for r in state["retrieved"] if r["score"] >= threshold]
+        if threshold is None:
+            return {"relevant": retrieved}
+        relevant = [r for r in retrieved if r["score"] >= threshold]
         return {"relevant": relevant}
 
     return grade
@@ -80,7 +108,12 @@ def _is_grounded(answer: str) -> bool:
 def make_generate_node(services: Services):
     def generate(state: dict) -> dict:
         refine = state.get("attempt", 0) > 0
-        messages = build_messages(state["question"], state["relevant"], refine=refine)
+        messages = build_messages(
+            state["question"],
+            state["relevant"],
+            refine=refine,
+            overview=bool(state.get("overview")),
+        )
         answer = services.llm.complete(messages)
         return {
             "answer": answer,

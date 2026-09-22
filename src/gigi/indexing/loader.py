@@ -42,6 +42,18 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _heading_only(text: str) -> bool:
+    """True when *text* is markdown headings and whitespace, with no body."""
+    saw_heading = False
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if not _HEADING_RE.match(line):
+            return False
+        saw_heading = True
+    return saw_heading
+
+
 def chunk_text(
     text: str,
     source: str,
@@ -56,13 +68,13 @@ def chunk_text(
 
     def flush() -> None:
         nonlocal current
-        if current.strip():
+        if current.strip() and not _heading_only(current):
             chunks.append(Chunk(source=source, text=current, heading=heading, idx=len(chunks)))
         current = ""
 
     for line in lines:
         m = _HEADING_RE.match(line)
-        if m and current.strip():
+        if m and current.strip() and not _heading_only(current):
             flush()
         if m:
             heading = m.group(2).strip()
@@ -72,7 +84,10 @@ def chunk_text(
             flush()
             current = current[-overlap:] + line if overlap else line
             while len(current) > size:
-                chunks.append(Chunk(source=source, text=current[:size], heading=heading, idx=len(chunks)))
+                if not _heading_only(current[:size]):
+                    chunks.append(
+                        Chunk(source=source, text=current[:size], heading=heading, idx=len(chunks))
+                    )
                 current = current[size - overlap :] if overlap else current[size:]
     flush()
     return chunks
