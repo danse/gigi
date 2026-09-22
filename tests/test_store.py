@@ -1,0 +1,64 @@
+"""Round-trip tests for the on-disk index (no model downloads)."""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pytest
+
+from gigi.indexing.loader import Chunk
+from gigi.indexing.store import IndexStore
+
+
+def _embeddings(n: int, dim: int = 2) -> np.ndarray:
+    return np.zeros((n, dim), dtype=np.float32)
+
+
+def test_store_roundtrip(tmp_path):
+    store = IndexStore(tmp_path)
+    chunks = [
+        Chunk(source="a.md", text="alpha", heading="A", idx=0),
+        Chunk(source="b.md", text="beta", heading="B", idx=1),
+    ]
+    store.save(chunks, _embeddings(2), "test-model")
+    loaded, embeddings, manifest = store.load()
+    assert [c.text for c in loaded] == ["alpha", "beta"]
+    assert embeddings.shape == (2, 2)
+    assert manifest.n_chunks == 2
+    assert manifest.model_name == "test-model"
+
+
+def test_store_roundtrip_unicode_line_separators(tmp_path):
+    """Document text may contain separators that splitlines() treats as newlines."""
+    store = IndexStore(tmp_path)
+    text = "hello\u2028world\u2029para\u0085next"
+    chunks = [Chunk(source="doc.md", text=text, heading="H", idx=0)]
+    store.save(chunks, _embeddings(1), "test-model")
+
+    raw = (tmp_path / "chunks.jsonl").read_text(encoding="utf-8")
+    assert "\u2028" in raw
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(raw.splitlines()[0])
+
+    loaded, _, _ = store.load()
+    assert loaded[0].text == text
+
+
+def test_load_accepts_json_array(tmp_path):
+    store = IndexStore(tmp_path)
+    store.save([Chunk(source="a.md", text="x", idx=0)], _embeddings(1), "test-model")
+    (tmp_path / "chunks.jsonl").write_text(
+        json.dumps([{"source": "a.md", "text": "x", "heading": "", "idx": 0}]),
+        encoding="utf-8",
+    )
+    loaded, _, _ = store.load()
+    assert loaded[0].text == "x"
+
+
+def test_load_corrupt_index_has_rebuild_hint(tmp_path):
+    store = IndexStore(tmp_path)
+    store.save([Chunk(source="a.md", text="x", idx=0)], _embeddings(1), "test-model")
+    (tmp_path / "chunks.jsonl").write_text('{"source": "a.md", "text": "unterminated\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="re-run `gigi index"):
+        store.load()

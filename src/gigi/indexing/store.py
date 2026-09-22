@@ -12,6 +12,27 @@ import numpy as np
 from gigi.indexing.loader import Chunk
 
 
+def _read_json_records(text: str) -> list[dict]:
+    """Decode a JSONL stream (or a single JSON array) via ``JSONDecoder``.
+
+    Do not use ``str.splitlines()``: it splits on U+2028/U+2029/U+0085, which
+    ``json.dumps(..., ensure_ascii=False)`` does not escape inside strings.
+    """
+    decoder = json.JSONDecoder()
+    idx = 0
+    n = len(text)
+    records: list[dict] = []
+    while idx < n:
+        if text[idx].isspace():
+            idx += 1
+            continue
+        obj, idx = decoder.raw_decode(text, idx)
+        records.append(obj)
+    if len(records) == 1 and isinstance(records[0], list):
+        return records[0]
+    return records
+
+
 @dataclass
 class IndexManifest:
     model_name: str
@@ -65,11 +86,13 @@ class IndexStore:
     def load(self) -> tuple[list[Chunk], np.ndarray, IndexManifest]:
         if not self.exists():
             raise FileNotFoundError(f"no index found at {self.index_dir}; run `gigi index <dir>` first")
-        chunks = [
-            Chunk.from_dict(json.loads(line))
-            for line in self.chunks_file.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        try:
+            records = _read_json_records(self.chunks_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"corrupt index at {self.chunks_file}: {e}; re-run `gigi index <dir>`"
+            ) from e
+        chunks = [Chunk.from_dict(d) for d in records]
         embeddings = np.load(self.embeddings_file)
         manifest = IndexManifest.from_dict(json.loads(self.manifest_file.read_text()))
         return chunks, embeddings, manifest
