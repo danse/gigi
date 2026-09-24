@@ -71,7 +71,7 @@ auto-download the embedding + reranker models from Hugging Face):
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh   # or download the binary
 ollama serve &
-ollama pull llama3.2
+ollama pull llama3.2:1b
 ```
 
 ## Usage
@@ -110,7 +110,7 @@ gigi status
 | `GIGI_EMBED_BATCH_SIZE`| `32`                                 | Chunks embedded per progress step   |
 | `GIGI_LLM`            | `ollama`                             | `ollama` \| `openai` \| `stub`       |
 | `GIGI_OLLAMA_URL`     | `http://localhost:11434`             | Ollama server                        |
-| `GIGI_OLLAMA_MODEL`   | `llama3.2`                           | Ollama model                         |
+| `GIGI_OLLAMA_MODEL`   | `llama3.2:1b`                        | Ollama model                         |
 | `GIGI_OPENAI_URL/API_KEY/MODEL` | —                          | For OpenAI-compatible endpoints      |
 | `GIGI_MAX_ATTEMPTS`   | `2`                                  | Max self-correction retries          |
 | `GIGI_LLM_TIMEOUT`    | `1800`                               | LLM HTTP read timeout in seconds (`0` waits forever) |
