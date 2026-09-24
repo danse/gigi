@@ -55,10 +55,13 @@ def _overview_chunks(services: Services, chunks, embeddings) -> list[dict]:
 def make_retrieve_node(services: Services):
     def retrieve(state: dict) -> dict:
         chunks, embeddings, _ = services.store.load()
+        # Fresh turn: forget per-question fields left by the previous turn.
+        base = {"attempt": 0, "grounded": False, "answer": ""}
         overview = is_overview_query(state["question"])
         if overview:
             representatives = _overview_chunks(services, chunks, embeddings)
             return {
+                **base,
                 "retrieved": representatives,
                 "relevant": representatives,
                 "overview": True,
@@ -76,7 +79,7 @@ def make_retrieve_node(services: Services):
         retrieved = [
             _chunk_dict(c.source, c.text, c.heading, score) for c, score in candidates
         ]
-        return {"retrieved": retrieved, "overview": False}
+        return {**base, "retrieved": retrieved, "overview": False}
 
     return retrieve
 
@@ -116,12 +119,22 @@ def make_generate_node(services: Services, *, overview: bool = False):
             state["relevant"],
             refine=refine,
             overview=overview,
+            history=state.get("history") or [],
         )
         answer = services.llm.complete(messages)
-        return {
+        result: dict = {
             "answer": answer,
             "grounded": _is_grounded(answer),
             "attempt": state.get("attempt", 0) + 1,
         }
+        if result["grounded"]:
+            # Only grounded turns join the conversation history, so a failed
+            # attempt (possibly repeated by self-correction) is never stored.
+            turn = [
+                {"role": "user", "content": state["question"]},
+                {"role": "assistant", "content": answer},
+            ]
+            result["history"] = (state.get("history") or []) + turn
+        return result
 
     return generate

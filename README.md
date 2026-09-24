@@ -30,7 +30,9 @@ gigi ask "what are these documents about?"
     `grade → generate`. Grade bails out to a "no answer" node when nothing
     clears the relevance threshold. Generate retries (max `GIGI_MAX_ATTEMPTS`)
     when grounding fails.
-  - State machine is compiled with an in-memory checkpointer.
+  - Consecutive `gigi ask` calls continue the conversation: grounded Q&A pairs
+    are stored in a SQLite checkpointer under `GIGI_INDEX_DIR` (`checkpoints.sqlite`,
+    thread id in `thread_id`), and replayed into the prompt. `--reset` starts over.
 - **Pluggable LLM** (`src/gigi/agent/llm.py`): Ollama (default), any
   OpenAI-compatible endpoint, or an offline stub for tests.
 
@@ -85,6 +87,10 @@ gigi index --recluster
 
 # Ask a question (answer + cited sources)
 gigi ask "What is the deployment process?"
+
+# Continue the conversation: consecutive asks remember earlier Q&A pairs
+gigi ask "And how do I roll it back?"
+gigi ask --reset "Start a fresh conversation"
 
 # Summarize the index (uses topic clusters, not query nearest-neighbors)
 gigi ask "what are these documents about?"

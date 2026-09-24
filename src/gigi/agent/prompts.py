@@ -21,11 +21,17 @@ def format_context(chunks: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+def format_history(history: list[dict], max_messages: int = 8) -> list[dict]:
+    """Last `max_messages` turns as chat messages (cap keeps prompts short)."""
+    return [m for m in history[-max_messages:] if m.get("role") in {"user", "assistant"}]
+
+
 def build_messages(
     question: str,
     chunks: list[dict],
     refine: bool = False,
     overview: bool = False,
+    history: list[dict] | None = None,
 ) -> list[dict]:
     context = format_context(chunks)
     user = f"Context:\n{context}\n\nQuestion: {question}"
@@ -39,7 +45,7 @@ def build_messages(
             "Your previous answer was not grounded in the context. "
             "Answer again using only the context.\n\n" + user
         )
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user},
-    ]
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(format_history(history or []))
+    messages.append({"role": "user", "content": user})
+    return messages

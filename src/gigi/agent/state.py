@@ -13,3 +13,4 @@ class GraphState(TypedDict, total=False):
     grounded: bool
     attempt: int
     overview: bool
+    history: list[dict]

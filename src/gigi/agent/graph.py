@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
@@ -36,7 +37,7 @@ def route_after_retrieve(state: dict) -> str:
     return "grade"
 
 
-def build_graph(services: Services):
+def build_graph(services: Services, checkpointer: BaseCheckpointSaver | None = None):
     builder = StateGraph(GraphState)
 
     builder.add_node("retrieve", make_retrieve_node(services))
@@ -70,7 +71,7 @@ def build_graph(services: Services):
     )
     builder.add_edge(NO_ANSWER, END)
 
-    return builder.compile(checkpointer=MemorySaver())
+    return builder.compile(checkpointer=checkpointer or MemorySaver())
 
 
 def run_agent(graph, question: str, thread_id: str | None = None) -> dict:

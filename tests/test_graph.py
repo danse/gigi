@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import numpy as np
 import torch
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from gigi.agent.graph import (
     GENERATE_OVERVIEW,
@@ -69,6 +72,18 @@ class FlakyLLM(StubLLM):
         if self.calls == 1:
             return "I don't know."
         return "The deployment uses the deploy.sh script."
+
+
+class RecordingLLM(StubLLM):
+    """StubLLM that records every messages list it is sent."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls: list[list[dict]] = []
+
+    def complete(self, messages):
+        self.calls.append(messages)
+        return super().complete(messages)
 
 
 def make_services(query: list[float], llm=None) -> Services:
@@ -138,3 +153,63 @@ def test_rerank_keeps_hits_below_old_logit_threshold():
     result = run_agent(build_graph(services), "How do I deploy to production?")
     assert result["relevant"], "rerank logits of 0.2 used to be dropped by grade threshold 1.0"
     assert result["overview"] is False
+
+
+def _saver(db_path) -> SqliteSaver:
+    return SqliteSaver(sqlite3.connect(str(db_path), check_same_thread=False))
+
+
+def _roles(messages: list[dict]) -> list[str]:
+    return [m["role"] for m in messages]
+
+
+def test_conversation_memory_carries_across_asks(tmp_path):
+    llm = RecordingLLM()
+    services = make_services([1.0, 0.0], llm=llm)
+    db = tmp_path / "ckpt.sqlite"
+
+    # First "process": ask turn 1.
+    graph1 = build_graph(services, checkpointer=_saver(db))
+    first = run_agent(graph1, "How do I deploy to production?", thread_id="t1")
+    assert first["attempt"] == 1
+    assert first["grounded"] is True
+    assert len(first["history"]) == 2
+
+    # Second "process": a fresh graph + fresh connection on the same checkpoint
+    # file must still see turn 1's history.
+    graph2 = build_graph(services, checkpointer=_saver(db))
+    second = run_agent(graph2, "And how do I roll it back?", thread_id="t1")
+    assert second["attempt"] == 1, "per-turn fields like attempt must reset between asks"
+    assert second["grounded"] is True
+    assert len(second["history"]) == 4
+
+    last_call = llm.calls[-1]
+    assert _roles(last_call) == ["system", "user", "assistant", "user"]
+    assert last_call[1]["content"] == "How do I deploy to production?"
+
+
+def test_new_thread_starts_with_empty_history(tmp_path):
+    llm = RecordingLLM()
+    graph = build_graph(
+        make_services([1.0, 0.0], llm=llm),
+        checkpointer=_saver(tmp_path / "ckpt.sqlite"),
+    )
+    run_agent(graph, "How do I deploy to production?", thread_id="a")
+    second = run_agent(graph, "What is the onboarding process?", thread_id="b")
+    assert second["history"] == [
+        {"role": "user", "content": "What is the onboarding process?"},
+        {"role": "assistant", "content": second["answer"]},
+    ]
+    assert _roles(llm.calls[-1]) == ["system", "user"]
+
+
+def test_ungrounded_retry_is_not_stored_in_history(tmp_path):
+    llm = FlakyLLM()
+    graph = build_graph(
+        make_services([1.0, 0.0], llm=llm),
+        checkpointer=_saver(tmp_path / "ckpt.sqlite"),
+    )
+    result = run_agent(graph, "How do I deploy?", thread_id="t")
+    assert llm.calls == 2
+    assert result["attempt"] == 2
+    assert len(result["history"]) == 2, "only the grounded turn should be remembered"

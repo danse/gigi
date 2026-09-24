@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import uuid
+from contextlib import AbstractContextManager
+from pathlib import Path
+from typing import Annotated
+
 from gigi.cpucompat import configure_cpu, configure_torch
 
 configure_cpu()
-
-from pathlib import Path
-from typing import Annotated
 
 import numpy as np
 import torch
 
 configure_torch(torch)
 import typer
+from langgraph.checkpoint.sqlite import SqliteSaver
 from rich.progress import (
     BarColumn,
     Progress,
@@ -37,6 +40,29 @@ app = typer.Typer(
     help="Local document Q&A assistant built on PyTorch + LangGraph.",
     no_args_is_help=True,
 )
+
+_THREAD_FILE = "thread_id"
+
+
+def _load_thread_id(index_dir: Path) -> str | None:
+    path = index_dir / _THREAD_FILE
+    return path.read_text().strip() if path.exists() else None
+
+
+def _save_thread_id(index_dir: Path, thread_id: str) -> None:
+    index_dir.mkdir(parents=True, exist_ok=True)
+    (index_dir / _THREAD_FILE).write_text(thread_id)
+
+
+def _checkpointer(index_dir: Path) -> AbstractContextManager[SqliteSaver]:
+    """Durable conversation memory, so consecutive `ask` calls remember earlier turns.
+
+    The returned value is a context manager: the sqlite connection it wraps must
+    stay open for the whole graph run.
+    """
+    db_path = index_dir / "checkpoints.sqlite"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteSaver.from_conn_string(str(db_path))
 
 
 def _services(settings: Settings) -> Services:
@@ -116,16 +142,29 @@ def index(
 
 
 @app.command()
-def ask(question: Annotated[str, typer.Argument(help="The question to answer.")]) -> None:
-    """Ask a question over the indexed documents."""
+def ask(
+    question: Annotated[str, typer.Argument(help="The question to answer.")],
+    reset: Annotated[
+        bool,
+        typer.Option("--reset", help="Start a new conversation, forgetting previous turns."),
+    ] = False,
+) -> None:
+    """Ask a question over the indexed documents. Consecutive asks continue the conversation."""
     settings = Settings.from_env()
     services = _services(settings)
-    graph = build_graph(services)
+    index_dir = settings.index_dir
+
+    thread_id = None if reset else _load_thread_id(index_dir)
+    if thread_id is None:
+        thread_id = uuid.uuid4().hex
     try:
-        result = run_agent(graph, question)
+        with _checkpointer(index_dir) as checkpointer:
+            graph = build_graph(services, checkpointer=checkpointer)
+            result = run_agent(graph, question, thread_id=thread_id)
     except LLMError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
         raise typer.Exit(1) from exc
+    _save_thread_id(index_dir, thread_id)
 
     if not result.get("relevant"):
         typer.secho(result["answer"], fg=typer.colors.YELLOW)
