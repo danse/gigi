@@ -42,10 +42,37 @@ def _services(settings: Settings) -> Services:
 
 
 @app.command()
-def index(root: Annotated[Path, typer.Argument(help="Directory of documents to index.")]) -> None:
+def index(
+    root: Annotated[
+        Path | None,
+        typer.Argument(help="Directory of documents to index."),
+    ] = None,
+    recluster: Annotated[
+        bool,
+        typer.Option(
+            "--recluster",
+            help="Rebuild topic clusters from the existing embeddings, without re-embedding.",
+        ),
+    ] = False,
+) -> None:
     """Build (or rebuild) the embedding index from a document folder."""
     settings = Settings.from_env()
     store = IndexStore(settings.index_dir)
+    if recluster:
+        if not store.exists():
+            typer.secho("No index found. Run `gigi index <dir>` first.", fg=typer.colors.YELLOW)
+            raise typer.Exit(1)
+        typer.echo(f"Reclustering embeddings in {store.index_dir}...")
+        clusters = store.recluster(n_clusters=settings.n_clusters)
+        typer.secho(
+            f"Wrote {len(clusters)} topics from {sum(c.size for c in clusters)} chunks "
+            f"into {store.clusters_file}",
+            fg=typer.colors.GREEN,
+        )
+        return
+    if root is None:
+        typer.secho("document directory required (or pass --recluster)", fg=typer.colors.RED)
+        raise typer.Exit(1)
     typer.echo(f"Scanning {root} for documents...")
     chunks = load_documents(root, chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
     if not chunks:

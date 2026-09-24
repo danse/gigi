@@ -82,11 +82,7 @@ class IndexStore:
             for chunk in chunks:
                 fh.write(json.dumps(chunk.as_dict(), ensure_ascii=False) + "\n")
         np.save(self.embeddings_file, embeddings)
-        clusters = build_clusters(chunks, embeddings, n_clusters=n_clusters)
-        self.clusters_file.write_text(
-            json.dumps({"n_clusters": len(clusters), "clusters": [c.as_dict() for c in clusters]}, indent=2),
-            encoding="utf-8",
-        )
+        self.save_clusters(chunks, embeddings, n_clusters=n_clusters)
         manifest = IndexManifest(
             model_name=model_name,
             dimension=int(embeddings.shape[1]),
@@ -95,6 +91,31 @@ class IndexStore:
         )
         self.manifest_file.write_text(json.dumps(manifest.as_dict(), indent=2))
         return manifest
+
+    def save_clusters(
+        self,
+        chunks: list[Chunk],
+        embeddings: np.ndarray,
+        n_clusters: int = 16,
+    ) -> list[ClusterRecord]:
+        clusters = build_clusters(chunks, embeddings, n_clusters=n_clusters)
+        self.clusters_file.write_text(
+            json.dumps(
+                {"n_clusters": len(clusters), "clusters": [c.as_dict() for c in clusters]},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return clusters
+
+    def recluster(self, n_clusters: int = 16) -> list[ClusterRecord]:
+        chunks, embeddings, _ = self.load()
+        if len(chunks) != int(embeddings.shape[0]):
+            raise ValueError(
+                f"index mismatch: {len(chunks)} chunks vs {embeddings.shape[0]} embeddings; "
+                "re-run `gigi index <dir>`"
+            )
+        return self.save_clusters(chunks, embeddings, n_clusters=n_clusters)
 
     def load_clusters(self) -> list[ClusterRecord]:
         if not self.clusters_file.is_file():

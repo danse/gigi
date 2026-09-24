@@ -78,6 +78,9 @@ ollama pull llama3.2
 # Index a folder of .md/.txt/.rst/.pdf files
 gigi index examples/docs
 
+# Rebuild topic clusters only (keeps embeddings; uses GIGI_N_CLUSTERS)
+gigi index --recluster
+
 # Ask a question (answer + cited sources)
 gigi ask "What is the deployment process?"
 
