@@ -25,9 +25,11 @@ gigi ask "what are these documents about?"
   - Top-k via cosine similarity + MMR, computed with `torch.matmul`
   - Spherical k-means over the index (`clusters.json`) for corpus-overview questions
 - **LangGraph agent** (`src/gigi/agent/graph.py`)
-  - `retrieve → grade → generate`, with a conditional edge that bails out to a
-    "no answer" node when nothing clears the relevance threshold, and a retry
-    edge that re-generates (max `GIGI_MAX_ATTEMPTS` times) when grounding fails.
+  - After `retrieve`, a conditional edge sends overview questions to
+    `generate_overview` (cluster representatives) and everything else through
+    `grade → generate`. Grade bails out to a "no answer" node when nothing
+    clears the relevance threshold. Generate retries (max `GIGI_MAX_ATTEMPTS`)
+    when grounding fails.
   - State machine is compiled with an in-memory checkpointer.
 - **Pluggable LLM** (`src/gigi/agent/llm.py`): Ollama (default), any
   OpenAI-compatible endpoint, or an offline stub for tests.

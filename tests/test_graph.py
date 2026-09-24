@@ -5,7 +5,13 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from gigi.agent.graph import build_graph, run_agent
+from gigi.agent.graph import (
+    GENERATE_OVERVIEW,
+    NO_ANSWER,
+    build_graph,
+    route_after_retrieve,
+    run_agent,
+)
 from gigi.agent.llm import StubLLM
 from gigi.agent.nodes import Services
 from gigi.config import Settings
@@ -74,6 +80,12 @@ def make_services(query: list[float], llm=None) -> Services:
         llm=llm or StubLLM(),
         reranker=None,
     )
+
+
+def test_route_after_retrieve_branches_on_overview():
+    assert route_after_retrieve({"overview": True, "retrieved": [{"text": "x"}]}) == GENERATE_OVERVIEW
+    assert route_after_retrieve({"overview": True, "retrieved": []}) == NO_ANSWER
+    assert route_after_retrieve({"overview": False, "retrieved": [{"text": "x"}]}) == "grade"
 
 
 def test_graph_answers_grounded_question():

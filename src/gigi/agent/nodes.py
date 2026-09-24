@@ -57,7 +57,12 @@ def make_retrieve_node(services: Services):
         chunks, embeddings, _ = services.store.load()
         overview = is_overview_query(state["question"])
         if overview:
-            return {"retrieved": _overview_chunks(services, chunks, embeddings), "overview": True}
+            representatives = _overview_chunks(services, chunks, embeddings)
+            return {
+                "retrieved": representatives,
+                "relevant": representatives,
+                "overview": True,
+            }
 
         query_emb = services.embedder.encode_one(state["question"])
         candidates = mmr_top_k(chunks, embeddings, query_emb, k=services.settings.top_k)
@@ -79,8 +84,6 @@ def make_retrieve_node(services: Services):
 def make_grade_node(settings: Settings):
     def grade(state: dict) -> dict:
         retrieved = state.get("retrieved") or []
-        if state.get("overview"):
-            return {"relevant": retrieved}
         threshold = settings.resolve_grade_threshold()
         if threshold is None:
             return {"relevant": retrieved}
@@ -105,14 +108,14 @@ def _is_grounded(answer: str) -> bool:
     return bool(answer.strip()) and "i don't know" not in lowered
 
 
-def make_generate_node(services: Services):
+def make_generate_node(services: Services, *, overview: bool = False):
     def generate(state: dict) -> dict:
         refine = state.get("attempt", 0) > 0
         messages = build_messages(
             state["question"],
             state["relevant"],
             refine=refine,
-            overview=bool(state.get("overview")),
+            overview=overview,
         )
         answer = services.llm.complete(messages)
         return {
