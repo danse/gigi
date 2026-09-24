@@ -16,17 +16,37 @@ class LLM:
         raise NotImplementedError
 
 
+def _http_timeout(seconds: float) -> httpx.Timeout:
+    """Short connect timeout; long (or unlimited) read for local generation."""
+    read: float | None = None if seconds <= 0 else seconds
+    return httpx.Timeout(connect=10.0, read=read, write=read, pool=10.0)
+
+
+def _request(method: str, url: str, *, timeout: float, **kwargs) -> httpx.Response:
+    try:
+        return httpx.request(method, url, timeout=_http_timeout(timeout), **kwargs)
+    except httpx.ConnectError as e:
+        raise LLMError(f"could not reach {url}; is the LLM server running?") from e
+    except httpx.TimeoutException as e:
+        limit = "no limit" if timeout <= 0 else f"{timeout:.0f}s"
+        raise LLMError(
+            f"LLM timed out after {limit}. On a slow CPU, raise GIGI_LLM_TIMEOUT "
+            f"(seconds; 0 waits indefinitely) or use a smaller model."
+        ) from e
+
+
 class OllamaLLM(LLM):
-    def __init__(self, url: str = "http://localhost:11434", model: str = "llama3.2", timeout: float = 600.0):
+    def __init__(self, url: str = "http://localhost:11434", model: str = "llama3.2", timeout: float = 1800.0):
         self.url = url.rstrip("/")
         self.model = model
         self.timeout = timeout
 
     def complete(self, messages: list[dict]) -> str:
-        resp = httpx.post(
+        resp = _request(
+            "POST",
             f"{self.url}/api/chat",
-            json={"model": self.model, "messages": messages, "stream": False},
             timeout=self.timeout,
+            json={"model": self.model, "messages": messages, "stream": False},
         )
         if resp.status_code >= 400:
             raise LLMError(f"ollama error {resp.status_code}: {resp.text}")
@@ -34,18 +54,19 @@ class OllamaLLM(LLM):
 
 
 class OpenAICompatLLM(LLM):
-    def __init__(self, url: str, api_key: str, model: str, timeout: float = 180.0):
+    def __init__(self, url: str, api_key: str, model: str, timeout: float = 1800.0):
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
 
     def complete(self, messages: list[dict]) -> str:
-        resp = httpx.post(
+        resp = _request(
+            "POST",
             f"{self.url}/v1/chat/completions",
+            timeout=self.timeout,
             json={"model": self.model, "messages": messages},
             headers={"Authorization": f"Bearer {self.api_key}"},
-            timeout=self.timeout,
         )
         if resp.status_code >= 400:
             raise LLMError(f"openai-compatible error {resp.status_code}: {resp.text}")
@@ -65,7 +86,11 @@ class StubLLM(LLM):
 def get_llm(settings: Settings) -> LLM:
     kind = settings.llm_kind.lower()
     if kind == "ollama":
-        return OllamaLLM(url=settings.ollama_url, model=settings.ollama_model)
+        return OllamaLLM(
+            url=settings.ollama_url,
+            model=settings.ollama_model,
+            timeout=settings.llm_timeout,
+        )
     if kind == "openai":
         if not settings.openai_url or not settings.openai_api_key:
             raise LLMError("GIGI_LLM=openai requires GIGI_OPENAI_URL and GIGI_OPENAI_API_KEY")
@@ -73,6 +98,7 @@ def get_llm(settings: Settings) -> LLM:
             url=settings.openai_url,
             api_key=settings.openai_api_key,
             model=settings.openai_model or "gpt-4o-mini",
+            timeout=settings.llm_timeout,
         )
     if kind == "stub":
         return StubLLM()

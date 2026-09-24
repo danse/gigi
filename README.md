@@ -113,6 +113,7 @@ gigi status
 | `GIGI_OLLAMA_MODEL`   | `llama3.2`                           | Ollama model                         |
 | `GIGI_OPENAI_URL/API_KEY/MODEL` | —                          | For OpenAI-compatible endpoints      |
 | `GIGI_MAX_ATTEMPTS`   | `2`                                  | Max self-correction retries          |
+| `GIGI_LLM_TIMEOUT`    | `1800`                               | LLM HTTP read timeout in seconds (`0` waits forever) |
 
 To try the pipeline without Ollama: `GIGI_LLM=stub gigi ask "..."`.
 

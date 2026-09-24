@@ -24,7 +24,7 @@ from rich.progress import (
 
 from gigi import __version__
 from gigi.agent.graph import build_graph, run_agent
-from gigi.agent.llm import get_llm
+from gigi.agent.llm import LLMError, get_llm
 from gigi.agent.nodes import Services
 from gigi.config import Settings
 from gigi.indexing.embedder import Embedder
@@ -121,7 +121,11 @@ def ask(question: Annotated[str, typer.Argument(help="The question to answer.")]
     settings = Settings.from_env()
     services = _services(settings)
     graph = build_graph(services)
-    result = run_agent(graph, question)
+    try:
+        result = run_agent(graph, question)
+    except LLMError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
 
     if not result.get("relevant"):
         typer.secho(result["answer"], fg=typer.colors.YELLOW)
