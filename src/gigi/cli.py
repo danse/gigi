@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from gigi.cpucompat import configure_cpu, configure_torch
+
+configure_cpu()
+
 from pathlib import Path
 from typing import Annotated
 
 import numpy as np
 import torch
+
+configure_torch(torch)
 import typer
 from rich.progress import (
     BarColumn,

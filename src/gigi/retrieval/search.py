@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from gigi.cpucompat import configure_cpu, configure_torch
+
+configure_cpu()
+
 import numpy as np
 import torch
+
+configure_torch(torch)
 
 from gigi.indexing.loader import Chunk
 

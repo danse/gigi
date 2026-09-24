@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from gigi.cpucompat import configure_cpu, configure_torch
+
+configure_cpu()
+
 import torch
+
+configure_torch(torch)
 
 # BGE v1.5 retrieval quality depends on this instruction being applied to queries only.
 _BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
