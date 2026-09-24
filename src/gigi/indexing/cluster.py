@@ -44,6 +44,22 @@ def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
     return matrix / np.clip(norms, 1e-12, None)
 
 
+def _weighted_index(rng: np.random.Generator, weights: np.ndarray) -> int:
+    """Sample an index with probability proportional to *weights*.
+
+    ``Generator.choice(..., p=...)`` rejects float32-derived distributions that
+    do not sum to 1 exactly; a CDF draw does not care.
+    """
+    w = np.nan_to_num(np.asarray(weights, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+    np.maximum(w, 0, out=w)
+    total = w.sum()
+    if total <= 0 or not np.isfinite(total):
+        return int(rng.integers(w.size))
+    cdf = np.cumsum(w)
+    cdf /= cdf[-1]
+    return int(np.searchsorted(cdf, rng.random(), side="right"))
+
+
 def _kmeans_pp_cosine(matrix: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
     n = matrix.shape[0]
     centers = np.empty((k, matrix.shape[1]), dtype=np.float32)
@@ -51,11 +67,7 @@ def _kmeans_pp_cosine(matrix: np.ndarray, k: int, rng: np.random.Generator) -> n
     min_sim = matrix @ centers[0]
     for i in range(1, k):
         dist = np.clip(1.0 - min_sim, 1e-12, None)
-        total = float(dist.sum())
-        if total <= 0:
-            idx = int(rng.integers(n))
-        else:
-            idx = int(rng.choice(n, p=(dist / total).astype(np.float64)))
+        idx = _weighted_index(rng, dist)
         centers[i] = matrix[idx]
         min_sim = np.maximum(min_sim, matrix @ centers[i])
     return _l2_normalize(centers)
