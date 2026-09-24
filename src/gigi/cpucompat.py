@@ -15,6 +15,11 @@ _ISA_ENV = {
     "MKL_ENABLE_INSTRUCTIONS": "SSE4_2",
     "DNNL_MAX_CPU_ISA": "SSE41",
     "ONEDNN_MAX_CPU_ISA": "SSE41",
+    # HuggingFace tokenizers (Rayon) and MKL OpenMP: one thread, no AVX JIT race.
+    "TOKENIZERS_PARALLELISM": "false",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
 }
 
 
@@ -48,13 +53,22 @@ def configure_cpu(flags: set[str] | None = None) -> bool:
 
 
 def configure_torch(torch_module: object) -> None:
-    """Disable mkldnn after torch import when we pinned SSE."""
+    """Disable AVX-prone backends after torch import when we pinned SSE."""
     if os.environ.get("ATEN_CPU_CAPABILITY") != "default":
         return
     backends = getattr(torch_module, "backends", None)
-    mkldnn = getattr(backends, "mkldnn", None)
-    if mkldnn is not None:
-        mkldnn.enabled = False
+    for name in ("mkldnn", "nnpack"):
+        backend = getattr(backends, name, None)
+        if backend is not None and hasattr(backend, "enabled"):
+            backend.enabled = False
+    try:
+        torch_module.set_num_threads(1)
+    except RuntimeError:
+        pass
+    try:
+        torch_module.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
 
 
 configure_cpu()

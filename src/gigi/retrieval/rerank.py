@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gigi.cpucompat import needs_sse_cap
 from gigi.indexing.loader import Chunk
 
 
@@ -14,10 +15,13 @@ class Reranker:
         if self._model is None:
             from sentence_transformers import CrossEncoder
 
+            extra = {}
+            if needs_sse_cap():
+                extra["processor_kwargs"] = {"use_fast": False}
             try:
-                self._model = CrossEncoder(self.model_name, local_files_only=True)
+                self._model = CrossEncoder(self.model_name, local_files_only=True, **extra)
             except OSError:
-                self._model = CrossEncoder(self.model_name)
+                self._model = CrossEncoder(self.model_name, **extra)
         return self._model
 
     def rerank(self, query: str, chunks: list[Chunk], top_k: int | None = None) -> list[tuple[Chunk, float]]:

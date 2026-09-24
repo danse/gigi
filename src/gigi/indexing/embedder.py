@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gigi.cpucompat import configure_cpu, configure_torch
+from gigi.cpucompat import configure_cpu, configure_torch, needs_sse_cap
 
 configure_cpu()
 
@@ -24,12 +24,16 @@ class Embedder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
+            extra = {}
+            if needs_sse_cap():
+                # tokenizers.abi3.so is built with AVX2; the Python tokenizer is SSE-safe.
+                extra["processor_kwargs"] = {"use_fast": False}
             try:
                 self._model = SentenceTransformer(
-                    self.model_name, device=self.device, local_files_only=True
+                    self.model_name, device=self.device, local_files_only=True, **extra
                 )
             except OSError:
-                self._model = SentenceTransformer(self.model_name, device=self.device)
+                self._model = SentenceTransformer(self.model_name, device=self.device, **extra)
         return self._model
 
     def format_query(self, text: str) -> str:
