@@ -36,7 +36,7 @@ def _request(method: str, url: str, *, timeout: float, **kwargs) -> httpx.Respon
 
 
 class OllamaLLM(LLM):
-    def __init__(self, url: str = "http://localhost:11434", model: str = "llama3.2:1b", timeout: float = 1800.0):
+    def __init__(self, url: str = "http://localhost:11434", model: str = "gemma3:270m", timeout: float = 1800.0):
         self.url = url.rstrip("/")
         self.model = model
         self.timeout = timeout

@@ -33,7 +33,7 @@ class Settings:
     grade_threshold: float | None = None
     llm_kind: str = "ollama"
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.2:1b"
+    ollama_model: str = "gemma3:270m"
     openai_url: str = ""
     openai_api_key: str = ""
     openai_model: str = ""
