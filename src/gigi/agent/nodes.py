@@ -40,7 +40,9 @@ def _overview_chunks(services: Services, chunks, embeddings) -> list[dict]:
     clusters: list[ClusterRecord] = loader() if callable(loader) else []
     if not clusters:
         clusters = build_clusters(chunks, embeddings, n_clusters=services.settings.n_clusters)
-    return cluster_representatives(chunks, clusters)
+    return cluster_representatives(
+        chunks, clusters, per_cluster=services.settings.overview_per_cluster
+    )
 
 
 def make_retrieve_node(services: Services):

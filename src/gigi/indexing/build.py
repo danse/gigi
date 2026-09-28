@@ -19,6 +19,20 @@ ScanCallback = Callable[[int], None]
 BatchCallback = Callable[[int, str], None]
 
 
+def _excludes(root: Path, index_dir: Path) -> set[Path]:
+    """Directories an index build must never read.
+
+    The index's own output directory first of all; plus any ``.index`` folder
+    inside the corpus root, so corpora that contain an older gigi index (e.g.
+    after ``gigi index .``) are not slowly self-polluted.
+    """
+    excluded = {index_dir.resolve()}
+    for candidate in Path(root).rglob(".index"):
+        if candidate.is_dir():
+            excluded.add(candidate.resolve())
+    return excluded
+
+
 def build_index(
     root: Path,
     settings: Settings,
@@ -35,6 +49,7 @@ def build_index(
         root,
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
+        exclude=_excludes(root, Path(index_dir or settings.index_dir)),
     )
     if not chunks:
         raise ValueError(f"no supported documents found under {root}")

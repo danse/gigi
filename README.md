@@ -8,8 +8,8 @@ cross-encoder reranks the candidates, and a LangGraph agent retrieves → grades
 generates a grounded answer (with a self-correction loop) via a local Ollama LLM.
 
 `gigi index` also clusters the embeddings into topics. `gigi summarise` uses those
-cluster representatives instead of nearest-neighbor search, so a large index can
-still be summarized:
+clusters' representative passages — several per topic — instead of
+nearest-neighbor search, so a large index can still be summarized:
 
 ```
 gigi index examples/docs     # build the embedding index + topic clusters
@@ -25,12 +25,14 @@ gigi summarise               # summarize the corpus via its topic clusters
     `query:` / `passage:` prefixes applied on each side, BGE instruction for `bge-*`)
   - Reranker: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (multilingual CrossEncoder; the L6 sibling is no longer public)
   - Top-k via cosine similarity + MMR, computed with `torch.matmul`
-  - Spherical k-means over the index (`clusters.json`) for `gigi summarise`
+  - Spherical k-means over the index (`clusters.json`, with per-cluster member
+    chunks) for `gigi summarise` — each topic contributes its nearest passages,
+    so even a journal-like corpus summarizes sensibly
 - **LangGraph agent** (`src/gigi/agent/graph.py`)
   - After `retrieve`, a conditional edge sends `overview`-seeded turns (only
-    `gigi summarise` takes that branch) to `generate_overview` (cluster
-    representatives) and everything else through `grade → generate`. Grade
-    bails out to a "no answer" node when nothing clears the relevance
+    `gigi summarise` takes that branch) to `generate_overview` (per-topic
+    representative passages) and everything else through `grade → generate`.
+    Grade bails out to a "no answer" node when nothing clears the relevance
     threshold. Generate retries (max `GIGI_MAX_ATTEMPTS`) when grounding fails.
   - Consecutive `gigi ask` calls continue the conversation: grounded Q&A pairs
     are stored in a SQLite checkpointer under `GIGI_INDEX_DIR` (`checkpoints.sqlite`,
@@ -117,6 +119,7 @@ gigi eval --grid          # sweep retrieval knobs, show the best configs
 | `GIGI_RERANK_TOP_K`   | `8`                                  | Candidates kept after rerank         |
 | `GIGI_MMR_LAMBDA`     | `0.7`                                | MMR diversity: 1 = pure relevance, 0 = pure diversity |
 | `GIGI_N_CLUSTERS`     | `16`                                 | Topic clusters built at index time   |
+| `GIGI_OVERVIEW_PER_CLUSTER` | `2`                           | Passages per topic fed to `gigi summarise` |
 | `GIGI_GRADE_THRESHOLD`| auto (off when rerank / `0.3` cosine)| Relevance cutoff; unset keeps reranked hits |
 | `GIGI_CHUNK_SIZE`     | `800`                                | Chunk size in characters             |
 | `GIGI_CHUNK_OVERLAP`  | `100`                                | Chunk overlap in characters          |
@@ -138,6 +141,10 @@ against an index built with another model and prints the rebuild command:
 gigi index .     # full rebuild; also bulk-downloads the new HF models on first run
 ```
 
+`gigi index <dir>` never reads its own `.index/` output directory (or any
+`.index` folder inside the corpus), so a re-run doesn't accumulate its own
+index files as documents.
+
 ## Evaluation (`gigi eval`)
 
 `gigi eval` measures the retrieval stage with no LLM at all: it embeds the
@@ -152,7 +159,7 @@ pipeline `ask` uses, and reports:
 | `mrr` | How high is the answer's source ranked (post-grade)? |
 | `answer-basis` | Is the top kept source the expected one? |
 | `bail rate` | How often nothing survives the relevance threshold? |
-| `overview cov` | What fraction of the corpus surfaces in cluster representatives? |
+| `overview cov` | What fraction of the corpus surfaces in the `summarise` passages? |
 | `score` | Weighted composite: `0.4·recall@8 + 0.3·mrr + 0.2·basis + 0.1·(1−bail)` for specific cases, `coverage` for overview cases |
 
 ```bash

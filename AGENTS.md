@@ -10,5 +10,11 @@ this file only records things an agent cannot discover directly from the code.
   reindex (`check_embed_model`); changing the rerank model does not.
 - The store records chunk `source` as full paths; `gigi eval` normalizes to
   bare file names before scoring.
+- `gigi index <root>` skips the index output dir (any `.index` folder), so a
+  corpus never contains its own index files.
+- `clusters.json` records each cluster's `members` (chunk ids, nearest-centroid
+  first); `gigi summarise` feeds `overview_per_cluster` of them per topic.
+  Indexes built before `members` existed need `gigi index --recluster` (no
+  re-embed) to light that up — until then summaries use one passage per topic.
 - Graph convention: conditional edges own control flow; nodes are
   single-purpose.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,16 +94,28 @@ def chunk_text(
     return chunks
 
 
-def load_documents(root: Path, chunk_size: int = 800, chunk_overlap: int = 100) -> list[Chunk]:
-    """Discover all supported files under *root* and return their chunks."""
+def load_documents(
+    root: Path,
+    chunk_size: int = 800,
+    chunk_overlap: int = 100,
+    exclude: Iterable[Path] | None = None,
+) -> list[Chunk]:
+    """Discover all supported files under *root* and return their chunks.
+
+    Files inside any of *exclude* directories are skipped (used so an index
+    never contains its own output directory).
+    """
     root = Path(root)
     if not root.exists():
         raise FileNotFoundError(f"document root does not exist: {root}")
+    excluded = {Path(p).resolve() for p in (exclude or [])}
     chunks: list[Chunk] = []
-    files = sorted(
-        p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
-    for path in files:
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+        resolved = path.resolve()
+        if resolved in excluded or any(ex in resolved.parents for ex in excluded):
+            continue
         text = read_text(path)
         if not text.strip():
             continue

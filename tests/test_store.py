@@ -31,6 +31,7 @@ def test_store_roundtrip(tmp_path):
     clusters = store.load_clusters()
     assert len(clusters) == 2
     assert sum(c.size for c in clusters) == 2
+    assert sum(len(c.members) for c in clusters) == 2, "member lists survive the store round-trip"
 
 
 def test_store_roundtrip_unicode_line_separators(tmp_path):

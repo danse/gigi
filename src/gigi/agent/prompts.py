@@ -21,6 +21,26 @@ def format_context(chunks: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+def format_overview_context(chunks: list[dict]) -> str:
+    """Group representative passages by topic so the summary is per-topic.
+
+    Chunks carry a ``cluster`` key from ``cluster_representatives``; passages
+    of the same cluster are the same topic, and the LLM is told so, instead of
+    being handed one flat soup of representatives.
+    """
+    groups: dict[int, list[dict]] = {}
+    for chunk in chunks:
+        groups.setdefault(chunk.get("cluster"), []).append(chunk)
+    blocks = []
+    for i, (_, members) in enumerate(groups.items(), 1):
+        lines = [f"Topic {i}:"]
+        for j, chunk in enumerate(members, 1):
+            heading = f" ({chunk['heading']})" if chunk.get("heading") else ""
+            lines.append(f"[{j}] source: {chunk['source']}{heading}\n{chunk['text']}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def format_history(history: list[dict], max_messages: int = 8) -> list[dict]:
     """Last `max_messages` turns as chat messages (cap keeps prompts short)."""
     return [m for m in history[-max_messages:] if m.get("role") in {"user", "assistant"}]
@@ -33,13 +53,17 @@ def build_messages(
     overview: bool = False,
     history: list[dict] | None = None,
 ) -> list[dict]:
-    context = format_context(chunks)
-    user = f"Context:\n{context}\n\nQuestion: {question}"
     if overview:
         user = (
-            "The context is representative passages covering the main topics in the index. "
-            "Summarize what the documents are about, using those passages.\n\n" + user
+            "The passages below are grouped by topic; each group is one topic "
+            "found in the index.\n"
+            "For every topic, write a one-line description of what it is about.\n"
+            "Then write a final short paragraph describing the overall content "
+            "of the index.\n\n"
+            + format_overview_context(chunks)
         )
+    else:
+        user = f"Context:\n{format_context(chunks)}\n\nQuestion: {question}"
     if refine:
         user = (
             "Your previous answer was not grounded in the context. "

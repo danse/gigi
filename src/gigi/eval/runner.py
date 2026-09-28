@@ -181,7 +181,12 @@ def evaluate_config(
 
     for case in cases:
         if case.kind == "overview":
-            rep_sources = {r["source"] for r in cluster_representatives(chunks, clusters)}
+            rep_sources = {
+                r["source"]
+                for r in cluster_representatives(
+                    chunks, clusters, per_cluster=settings.overview_per_cluster
+                )
+            }
             results.append(
                 CaseResult(
                     question=case.question,

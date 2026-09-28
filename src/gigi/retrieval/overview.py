@@ -11,26 +11,35 @@ from gigi.indexing.cluster import ClusterRecord
 from gigi.indexing.loader import Chunk
 
 
-def cluster_representatives(chunks: list[Chunk], clusters: list[ClusterRecord]) -> list[dict]:
-    """One representative chunk per topic cluster, with a coverage score (0..1).
+def cluster_representatives(
+    chunks: list[Chunk],
+    clusters: list[ClusterRecord],
+    per_cluster: int = 1,
+) -> list[dict]:
+    """The *per_cluster* chunks nearest each cluster centroid, largest topics first.
 
-    Chunks are ordered by cluster size (large topics first). A representative
-    is the chunk nearest its cluster's centroid; its score is the cluster's
-    share of the corpus, so `gigi summarise` answers with the main topics, not
-    a nearest-neighbor query.
+    Every returned chunk carries a ``cluster`` key (the record id) so the
+    overview prompt can group passages by topic. A chunk's score is its
+    cluster's share of the corpus. Clusters recorded without member lists
+    (older indexes) fall back to their single representative, so ``summarise``
+    stays correct until the index is reclustered.
     """
     n = max(len(chunks), 1)
+    per_cluster = max(per_cluster, 1)
     retrieved: list[dict] = []
     for cluster in clusters:
-        if cluster.centroid_idx < 0 or cluster.centroid_idx >= len(chunks):
-            continue
-        chunk = chunks[cluster.centroid_idx]
-        retrieved.append(
-            {
-                "source": chunk.source,
-                "text": chunk.text,
-                "heading": cluster.heading or "",
-                "score": cluster.size / n,
-            }
-        )
+        idxs = [i for i in (cluster.members or []) if 0 <= i < len(chunks)]
+        if not idxs and 0 <= cluster.centroid_idx < len(chunks):
+            idxs = [cluster.centroid_idx]
+        for idx in idxs[:per_cluster]:
+            chunk = chunks[idx]
+            retrieved.append(
+                {
+                    "source": chunk.source,
+                    "text": chunk.text,
+                    "heading": cluster.heading or "",
+                    "score": cluster.size / n,
+                    "cluster": cluster.id,
+                }
+            )
     return retrieved

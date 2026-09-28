@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -18,15 +18,21 @@ class ClusterRecord:
     size: int
     heading: str
     source: str
+    # Chunk indices in this cluster, nearest-centroid first (centroid_idx first).
+    # Absent in indexes built before this field existed.
+    members: list[int] = field(default_factory=list)
 
     def as_dict(self) -> dict:
-        return {
+        d = {
             "id": self.id,
             "centroid_idx": self.centroid_idx,
             "size": self.size,
             "heading": self.heading,
             "source": self.source,
         }
+        if self.members:
+            d["members"] = self.members
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> ClusterRecord:
@@ -36,6 +42,7 @@ class ClusterRecord:
             size=int(d["size"]),
             heading=str(d.get("heading", "")),
             source=str(d.get("source", "")),
+            members=[int(i) for i in d.get("members", [])],
         )
 
 
@@ -118,9 +125,12 @@ def build_clusters(
         mask = np.flatnonzero(labels == j)
         if mask.size == 0:
             continue
-        nearest = int(mask[int((matrix[mask] @ centers[j]).argmax())])
-        members = [chunks[int(i)] for i in mask]
-        heading = Counter(c.heading or Path(c.source).name for c in members).most_common(1)[0][0]
+        scores = matrix[mask] @ centers[j]
+        order = mask[np.argsort(-scores)]  # nearest to the centroid first
+        nearest = int(order[0])
+        members = [int(i) for i in order]
+        members_list = [chunks[int(i)] for i in mask]
+        heading = Counter(c.heading or Path(c.source).name for c in members_list).most_common(1)[0][0]
         records.append(
             ClusterRecord(
                 id=len(records),
@@ -128,6 +138,7 @@ def build_clusters(
                 size=int(mask.size),
                 heading=heading,
                 source=chunks[nearest].source,
+                members=members,
             )
         )
     records.sort(key=lambda r: r.size, reverse=True)

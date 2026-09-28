@@ -28,6 +28,7 @@ class Settings:
     rerank_top_k: int = 8
     mmr_lambda: float = 0.7
     n_clusters: int = 16
+    overview_per_cluster: int = 2
     chunk_size: int = 800
     chunk_overlap: int = 100
     embed_batch_size: int = 32
@@ -60,6 +61,9 @@ class Settings:
             rerank_top_k=int(os.environ.get("GIGI_RERANK_TOP_K", cls.rerank_top_k)),
             mmr_lambda=float(os.environ.get("GIGI_MMR_LAMBDA", cls.mmr_lambda)),
             n_clusters=int(os.environ.get("GIGI_N_CLUSTERS", cls.n_clusters)),
+            overview_per_cluster=int(
+                os.environ.get("GIGI_OVERVIEW_PER_CLUSTER", cls.overview_per_cluster)
+            ),
             chunk_size=int(os.environ.get("GIGI_CHUNK_SIZE", cls.chunk_size)),
             chunk_overlap=int(os.environ.get("GIGI_CHUNK_OVERLAP", cls.chunk_overlap)),
             embed_batch_size=int(os.environ.get("GIGI_EMBED_BATCH_SIZE", cls.embed_batch_size)),

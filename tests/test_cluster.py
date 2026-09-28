@@ -28,6 +28,30 @@ def test_build_clusters_separates_two_groups():
     assert all(0 <= r.centroid_idx < 4 for r in records)
 
 
+def test_build_clusters_records_members_nearest_first():
+    chunks = [
+        Chunk(source="a.md", text="alpha", heading="Alpha", idx=0),
+        Chunk(source="a.md", text="alpha 2", heading="Alpha", idx=1),
+        Chunk(source="b.md", text="beta", heading="Beta", idx=2),
+        Chunk(source="b.md", text="beta 2", heading="Beta", idx=3),
+    ]
+    embeddings = np.array(
+        [[1.0, 0.0], [0.99, 0.01], [0.0, 1.0], [0.01, 0.99]],
+        dtype=np.float32,
+    )
+    records = build_clusters(chunks, embeddings, n_clusters=2, seed=0)
+    for record in records:
+        assert record.members, "every cluster persists its member chunk indices"
+        assert len(record.members) == record.size, "members must account for the whole cluster"
+        assert len(set(record.members)) == record.size, "member indices are distinct"
+        assert record.members[0] == record.centroid_idx, "the nearest member is the representative"
+        assert all(0 <= i < 4 for i in record.members)
+    alpha = next(r for r in records if r.heading == "Alpha")
+    assert set(alpha.members) == {0, 1}
+    beta = next(r for r in records if r.heading == "Beta")
+    assert set(beta.members) == {2, 3}
+
+
 def test_kmeans_pp_accepts_float32_weights_that_do_not_sum_to_one():
     """Large float32 distance vectors often fail numpy.choice's p.sum()==1 check."""
     rng = np.random.default_rng(0)
