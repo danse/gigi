@@ -7,14 +7,14 @@ embeds your docs and query, torch does cosine-similarity retrieval, a PyTorch
 cross-encoder reranks the candidates, and a LangGraph agent retrieves → grades →
 generates a grounded answer (with a self-correction loop) via a local Ollama LLM.
 
-`gigi index` also clusters the embeddings into topics. Overview questions such as
-`gigi ask "what are these documents about?"` use those cluster representatives
-instead of nearest-neighbor search, so a large index can still be summarized.
+`gigi index` also clusters the embeddings into topics. `gigi summarise` uses those
+cluster representatives instead of nearest-neighbor search, so a large index can
+still be summarized:
 
 ```
 gigi index examples/docs     # build the embedding index + topic clusters
 gigi ask "How do I deploy the app?"
-gigi ask "what are these documents about?"
+gigi summarise               # summarize the corpus via its topic clusters
 ```
 
 ## What makes it tick
@@ -25,14 +25,13 @@ gigi ask "what are these documents about?"
     `query:` / `passage:` prefixes applied on each side, BGE instruction for `bge-*`)
   - Reranker: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (multilingual CrossEncoder; the L6 sibling is no longer public)
   - Top-k via cosine similarity + MMR, computed with `torch.matmul`
-  - Spherical k-means over the index (`clusters.json`) for corpus-overview questions
-    (detection speaks English, Italian, Spanish and Catalan)
+  - Spherical k-means over the index (`clusters.json`) for `gigi summarise`
 - **LangGraph agent** (`src/gigi/agent/graph.py`)
-  - After `retrieve`, a conditional edge sends overview questions to
-    `generate_overview` (cluster representatives) and everything else through
-    `grade → generate`. Grade bails out to a "no answer" node when nothing
-    clears the relevance threshold. Generate retries (max `GIGI_MAX_ATTEMPTS`)
-    when grounding fails.
+  - After `retrieve`, a conditional edge sends `overview`-seeded turns (only
+    `gigi summarise` takes that branch) to `generate_overview` (cluster
+    representatives) and everything else through `grade → generate`. Grade
+    bails out to a "no answer" node when nothing clears the relevance
+    threshold. Generate retries (max `GIGI_MAX_ATTEMPTS`) when grounding fails.
   - Consecutive `gigi ask` calls continue the conversation: grounded Q&A pairs
     are stored in a SQLite checkpointer under `GIGI_INDEX_DIR` (`checkpoints.sqlite`,
     thread id in `thread_id`), and replayed into the prompt. `--reset` starts over.
@@ -96,7 +95,7 @@ gigi ask "And how do I roll it back?"
 gigi ask --reset "Start a fresh conversation"
 
 # Summarize the index (uses topic clusters, not query nearest-neighbors)
-gigi ask "what are these documents about?"
+gigi summarise
 
 # Inspect the index
 gigi status

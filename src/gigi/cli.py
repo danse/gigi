@@ -42,6 +42,10 @@ app = typer.Typer(
 
 _THREAD_FILE = "thread_id"
 
+# Canonical prompt for `gigi summarise`: it seeds the overview branch of the
+# graph, which builds the "representative passages" prompt around this question.
+_SUMMARY_QUESTION = "what are these documents about?"
+
 
 def _load_thread_id(index_dir: Path) -> str | None:
     path = index_dir / _THREAD_FILE
@@ -147,6 +151,25 @@ def index(
     )
 
 
+def _show_result(result: dict) -> None:
+    """Print an agent result (answer + sources) the same way for every command."""
+    if not result.get("relevant"):
+        typer.secho(result["answer"], fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
+
+    typer.secho(result["answer"], fg=typer.colors.WHITE)
+    typer.echo("")
+    typer.secho("Sources:", bold=True)
+    seen = set()
+    for chunk in result["relevant"]:
+        key = chunk["source"]
+        if key in seen:
+            continue
+        seen.add(key)
+        heading = f" — {chunk['heading']}" if chunk.get("heading") else ""
+        typer.echo(f"  • {key}{heading}  (score {chunk['score']:.2f})")
+
+
 @app.command()
 def ask(
     question: Annotated[str, typer.Argument(help="The question to answer.")],
@@ -173,21 +196,31 @@ def ask(
         raise typer.Exit(1) from exc
     _save_thread_id(index_dir, thread_id)
 
-    if not result.get("relevant"):
-        typer.secho(result["answer"], fg=typer.colors.YELLOW)
-        raise typer.Exit(1)
+    _show_result(result)
 
-    typer.secho(result["answer"], fg=typer.colors.WHITE)
-    typer.echo("")
-    typer.secho("Sources:", bold=True)
-    seen = set()
-    for chunk in result["relevant"]:
-        key = chunk["source"]
-        if key in seen:
-            continue
-        seen.add(key)
-        heading = f" — {chunk['heading']}" if chunk.get("heading") else ""
-        typer.echo(f"  • {key}{heading}  (score {chunk['score']:.2f})")
+
+@app.command(name="summarise")
+def summarise() -> None:
+    """Summarise the indexed documents using their topic clusters (no question needed)."""
+    settings = Settings.from_env()
+    store = IndexStore(settings.index_dir)
+    _require_matching_index(store, settings)
+    services = Services(
+        settings=settings,
+        store=store,
+        embedder=Embedder(settings.embed_model),
+        llm=get_llm(settings),
+        reranker=None,  # a corpus summary never needs cross-encoder reranking
+    )
+    # In-memory checkpointer: summaries are standalone, not part of a conversation.
+    graph = build_graph(services)
+    try:
+        result = run_agent(graph, _SUMMARY_QUESTION, overview=True)
+    except LLMError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
+
+    _show_result(result)
 
 
 @app.command()

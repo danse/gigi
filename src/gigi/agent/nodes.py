@@ -8,7 +8,7 @@ from gigi.config import Settings
 from gigi.indexing.cluster import ClusterRecord, build_clusters
 from gigi.indexing.embedder import Embedder
 from gigi.indexing.store import IndexStore
-from gigi.retrieval.overview import cluster_representatives, is_overview_query
+from gigi.retrieval.overview import cluster_representatives
 from gigi.retrieval.rerank import Reranker
 from gigi.retrieval.search import mmr_top_k
 
@@ -48,8 +48,7 @@ def make_retrieve_node(services: Services):
         chunks, embeddings, _ = services.store.load()
         # Fresh turn: forget per-question fields left by the previous turn.
         base = {"attempt": 0, "grounded": False, "answer": ""}
-        overview = is_overview_query(state["question"])
-        if overview:
+        if state.get("overview", False):
             representatives = _overview_chunks(services, chunks, embeddings)
             return {
                 **base,

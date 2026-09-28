@@ -74,6 +74,9 @@ def build_graph(services: Services, checkpointer: BaseCheckpointSaver | None = N
     return builder.compile(checkpointer=checkpointer or MemorySaver())
 
 
-def run_agent(graph, question: str, thread_id: str | None = None) -> dict:
+def run_agent(
+    graph, question: str, thread_id: str | None = None, *, overview: bool = False
+) -> dict:
+    """Run one turn. `overview=True` forces the corpus-summary branch (`gigi summarise`)."""
     config = {"configurable": {"thread_id": thread_id or uuid.uuid4().hex}}
-    return graph.invoke({"question": question}, config)
+    return graph.invoke({"question": question, "overview": overview}, config)

@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from gigi.agent.llm import StubLLM
 from gigi.agent.nodes import Services
-from gigi.cli import _load_thread_id, app
+from gigi.cli import _SUMMARY_QUESTION, _load_thread_id, app
 from gigi.config import Settings
 from gigi.indexing.cluster import ClusterRecord
 from gigi.indexing.loader import Chunk
@@ -96,3 +96,32 @@ def test_ask_reset_starts_a_new_thread(monkeypatch, tmp_path):
     assert runner.invoke(app, ["ask", "What is the onboarding process?", "--reset"]).exit_code == 0
     assert _load_thread_id(tmp_path) != original, "--reset must mint a new thread"
     assert [m["role"] for m in llm.calls[-1]] == ["system", "user"]
+
+
+def test_summarise_forces_overview_branch_without_reranker(monkeypatch, tmp_path):
+    monkeypatch.setenv("GIGI_INDEX_DIR", str(tmp_path))
+    monkeypatch.setattr("gigi.cli._require_matching_index", lambda store, settings: None)
+    captured: dict = {}
+
+    def fake_run_agent(graph, question, thread_id=None, *, overview=False):
+        captured["question"] = question
+        captured["overview"] = overview
+        return {
+            "answer": "Topics include deployment and onboarding.",
+            "relevant": [
+                {"source": "deployment.md", "heading": "Deployment", "score": 0.5},
+                {"source": "onboarding.md", "heading": "Setup", "score": 0.25},
+            ],
+        }
+
+    monkeypatch.setattr("gigi.cli.run_agent", fake_run_agent)
+    monkeypatch.setattr("gigi.cli.build_graph", lambda services: object())  # graph never invoked
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["summarise"])
+    assert result.exit_code == 0, result.output
+    assert captured["overview"] is True, "summarise must take the cluster-representatives branch"
+    assert captured["question"] == _SUMMARY_QUESTION
+    assert "deployment.md" in result.output
+    assert "onboarding.md" in result.output
+    assert "Topics include" in result.output

@@ -136,10 +136,21 @@ def test_graph_retries_when_answer_not_grounded():
 def test_graph_overview_uses_cluster_representatives():
     services = make_services([0.0, 0.0])
     graph = build_graph(services)
-    result = run_agent(graph, "what are these documents about?")
+    result = run_agent(graph, "what are these documents about?", overview=True)
     assert result["overview"] is True
     assert {c["source"] for c in result["relevant"]} == {"deployment.md", "onboarding.md"}
     assert result["answer"]
+
+
+def test_graph_plain_question_never_routes_to_overview():
+    # Overview phrasing is no longer auto-detected: only `gigi summarise` forces
+    # the cluster-representative branch, so a normal ask stays on the NN path.
+    services = make_services([1.0, 0.0])
+    graph = build_graph(services)
+    result = run_agent(graph, "what are these documents about?")
+    assert result["overview"] is False
+    assert result["relevant"], "an overview-phrased ask must still run nearest-neighbor retrieval"
+    assert result["relevant"][0]["source"] == "deployment.md"
 
 
 def test_rerank_keeps_hits_below_old_logit_threshold():
