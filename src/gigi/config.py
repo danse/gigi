@@ -21,8 +21,8 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass
 class Settings:
     index_dir: Path = Path.cwd() / ".index"
-    embed_model: str = "BAAI/bge-small-en-v1.5"
-    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    embed_model: str = "intfloat/multilingual-e5-small"
+    rerank_model: str = "cross-encoder/mmarco-mMiniLMv2-L6-H384-v1"
     rerank_enabled: bool = True
     top_k: int = 16
     rerank_top_k: int = 8

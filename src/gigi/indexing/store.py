@@ -123,6 +123,24 @@ class IndexStore:
         data = json.loads(self.clusters_file.read_text(encoding="utf-8"))
         return [ClusterRecord.from_dict(d) for d in data.get("clusters", [])]
 
+    def load_manifest(self) -> IndexManifest:
+        if not self.manifest_file.is_file():
+            raise FileNotFoundError(
+                f"no index found at {self.index_dir}; run `gigi index <dir>` first"
+            )
+        return IndexManifest.from_dict(json.loads(self.manifest_file.read_text()))
+
+    def check_embed_model(self, expected: str) -> None:
+        """Refuse to proceed when the index was built with a different embedding model."""
+        if not self.exists():
+            raise FileNotFoundError("No index found. Run `gigi index <dir>` first.")
+        actual = self.load_manifest().model_name
+        if actual != expected:
+            raise ValueError(
+                f"index built with {actual!r}, but {expected!r} is configured; "
+                "embeddings are not comparable across models — run `gigi index <dir>` to rebuild"
+            )
+
     def load(self) -> tuple[list[Chunk], np.ndarray, IndexManifest]:
         if not self.exists():
             raise FileNotFoundError(f"no index found at {self.index_dir}; run `gigi index <dir>` first")

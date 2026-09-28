@@ -73,6 +73,15 @@ def _services(settings: Settings) -> Services:
     return Services(settings=settings, store=store, embedder=embedder, llm=llm, reranker=reranker)
 
 
+def _require_matching_index(store: IndexStore, settings: Settings) -> None:
+    """Refuse to run against an index built with a different embedding model."""
+    try:
+        store.check_embed_model(settings.embed_model)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
+
+
 @app.command()
 def index(
     root: Annotated[
@@ -91,9 +100,7 @@ def index(
     settings = Settings.from_env()
     store = IndexStore(settings.index_dir)
     if recluster:
-        if not store.exists():
-            typer.secho("No index found. Run `gigi index <dir>` first.", fg=typer.colors.YELLOW)
-            raise typer.Exit(1)
+        _require_matching_index(store, settings)
         typer.echo(f"Reclustering embeddings in {store.index_dir}...")
         clusters = store.recluster(n_clusters=settings.n_clusters)
         typer.secho(
@@ -124,7 +131,7 @@ def index(
         task = progress.add_task("Embedding", total=len(chunks))
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
-            embedded.append(embedder.encode([c.text for c in batch]))
+            embedded.append(embedder.encode_chunks([c.text for c in batch]))
             progress.update(
                 task,
                 advance=len(batch),
@@ -152,6 +159,7 @@ def ask(
     """Ask a question over the indexed documents. Consecutive asks continue the conversation."""
     settings = Settings.from_env()
     services = _services(settings)
+    _require_matching_index(services.store, settings)
     index_dir = settings.index_dir
 
     thread_id = None if reset else _load_thread_id(index_dir)
@@ -188,10 +196,12 @@ def status() -> None:
     """Show the current index state."""
     settings = Settings.from_env()
     store = IndexStore(settings.index_dir)
-    if not store.exists():
-        typer.secho("No index found. Run `gigi index <dir>` first.", fg=typer.colors.YELLOW)
-        raise typer.Exit(1)
-    chunks, _, manifest = store.load()
+    try:
+        store.check_embed_model(settings.embed_model)
+        chunks, _, manifest = store.load()
+    except (FileNotFoundError, ValueError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
     clusters = store.load_clusters()
     sources = sorted({c.source for c in chunks})
     typer.echo(f"Index dir : {store.index_dir}")

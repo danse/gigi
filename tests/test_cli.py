@@ -28,6 +28,9 @@ class _Store:
     def load(self):
         return CHUNKS, EMBEDDINGS, MISSING_MANIFEST
 
+    def check_embed_model(self, expected: str) -> None:
+        return None
+
     def load_clusters(self):
         return [
             ClusterRecord(id=0, centroid_idx=0, size=10, heading="Deployment", source="deployment.md"),

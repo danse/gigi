@@ -85,6 +85,7 @@ def test_index_recluster_cli(tmp_path, monkeypatch):
 
     index_dir = tmp_path / ".index"
     monkeypatch.setenv("GIGI_INDEX_DIR", str(index_dir))
+    monkeypatch.setenv("GIGI_EMBED_MODEL", "test-model")
     store = IndexStore(index_dir)
     store.save(
         [
@@ -119,3 +120,35 @@ def test_load_corrupt_index_has_rebuild_hint(tmp_path):
     (tmp_path / "chunks.jsonl").write_text('{"source": "a.md", "text": "unterminated\n', encoding="utf-8")
     with pytest.raises(ValueError, match="re-run `gigi index"):
         store.load()
+
+
+def test_check_embed_model_rejects_mismatch(tmp_path):
+    store = IndexStore(tmp_path)
+    store.save([Chunk(source="a.md", text="x", idx=0)], _embeddings(1), "old-model")
+    with pytest.raises(ValueError, match="old-model"):
+        store.check_embed_model("intfloat/multilingual-e5-small")
+
+
+def test_check_embed_model_accepts_match(tmp_path):
+    store = IndexStore(tmp_path)
+    store.save([Chunk(source="a.md", text="x", idx=0)], _embeddings(1), "intfloat/multilingual-e5-small")
+    store.check_embed_model("intfloat/multilingual-e5-small")  # must not raise
+
+
+def test_ask_refuses_index_from_other_model(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from gigi.cli import app
+
+    index_dir = tmp_path / ".index"
+    monkeypatch.setenv("GIGI_INDEX_DIR", str(index_dir))
+    store = IndexStore(index_dir)
+    store.save(
+        [Chunk(source="a.md", text="deploy tramite script", idx=0)],
+        _embeddings(1),
+        "other-model",
+    )
+    result = CliRunner().invoke(app, ["ask", "di cosa parlano questi documenti?"])
+    assert result.exit_code == 1
+    assert "other-model" in result.output
+    assert "gigi index" in result.output

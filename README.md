@@ -19,11 +19,14 @@ gigi ask "what are these documents about?"
 
 ## What makes it tick
 
-- **PyTorch retrieval stack**
-  - Embeddings: `BAAI/bge-small-en-v1.5` (sentence-transformers; BGE query instruction applied)
-  - Reranker: `cross-encoder/ms-marco-MiniLM-L-6-v2` (CrossEncoder)
+- **PyTorch retrieval stack** (multilingual; index is often Italian/Spanish/Catalan
+  prose, English or Dutch in the docs)
+  - Embeddings: `intfloat/multilingual-e5-small` (sentence-transformers; e5
+    `query:` / `passage:` prefixes applied on each side, BGE instruction for `bge-*`)
+  - Reranker: `cross-encoder/mmarco-mMiniLMv2-L6-H384-v1` (multilingual CrossEncoder)
   - Top-k via cosine similarity + MMR, computed with `torch.matmul`
   - Spherical k-means over the index (`clusters.json`) for corpus-overview questions
+    (detection speaks English, Italian, Spanish and Catalan)
 - **LangGraph agent** (`src/gigi/agent/graph.py`)
   - After `retrieve`, a conditional edge sends overview questions to
     `generate_overview` (cluster representatives) and everything else through
@@ -104,8 +107,8 @@ gigi status
 | Var                   | Default                              | Description                          |
 | --------------------- | ------------------------------------ | ------------------------------------ |
 | `GIGI_INDEX_DIR`      | `./.index` (in the current dir)      | Where the embedding index lives; one per directory |
-| `GIGI_EMBED_MODEL`    | `BAAI/bge-small-en-v1.5`             | Sentence-transformer for embeddings  |
-| `GIGI_RERANK_MODEL`   | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder reranker            |
+| `GIGI_EMBED_MODEL`    | `intfloat/multilingual-e5-small`    | Sentence-transformer for embeddings (multilingual) |
+| `GIGI_RERANK_MODEL`   | `cross-encoder/mmarco-mMiniLMv2-L6-H384-v1` | Multilingual cross-encoder reranker |
 | `GIGI_RERANK`         | `1`                                  | Enable the reranker (`0` to disable) |
 | `GIGI_TOP_K`          | `16`                                 | Candidates retrieved before rerank   |
 | `GIGI_RERANK_TOP_K`   | `8`                                  | Candidates kept after rerank         |
@@ -122,6 +125,14 @@ gigi status
 | `GIGI_LLM_TIMEOUT`    | `1800`                               | LLM HTTP read timeout in seconds (`0` waits forever) |
 
 To try the pipeline without Ollama: `GIGI_LLM=stub gigi ask "..."`.
+
+Changing `GIGI_EMBED_MODEL` (or the default) requires a full re-index — the
+embeddings live in a different vector space, so `gigi ask` refuses to run
+against an index built with another model and prints the rebuild command:
+
+```bash
+gigi index .     # full rebuild; also bulk-downloads the new HF models on first run
+```
 
 ## Tests
 
