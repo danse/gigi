@@ -22,10 +22,11 @@ def _env_bool(name: str, default: bool) -> bool:
 class Settings:
     index_dir: Path = Path.cwd() / ".index"
     embed_model: str = "intfloat/multilingual-e5-small"
-    rerank_model: str = "cross-encoder/mmarco-mMiniLMv2-L6-H384-v1"
+    rerank_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
     rerank_enabled: bool = True
     top_k: int = 16
     rerank_top_k: int = 8
+    mmr_lambda: float = 0.7
     n_clusters: int = 16
     chunk_size: int = 800
     chunk_overlap: int = 100
@@ -57,6 +58,7 @@ class Settings:
             rerank_enabled=_env_bool("GIGI_RERANK", cls.rerank_enabled),
             top_k=int(os.environ.get("GIGI_TOP_K", cls.top_k)),
             rerank_top_k=int(os.environ.get("GIGI_RERANK_TOP_K", cls.rerank_top_k)),
+            mmr_lambda=float(os.environ.get("GIGI_MMR_LAMBDA", cls.mmr_lambda)),
             n_clusters=int(os.environ.get("GIGI_N_CLUSTERS", cls.n_clusters)),
             chunk_size=int(os.environ.get("GIGI_CHUNK_SIZE", cls.chunk_size)),
             chunk_overlap=int(os.environ.get("GIGI_CHUNK_OVERLAP", cls.chunk_overlap)),

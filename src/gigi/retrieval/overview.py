@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import re
 
+from gigi.indexing.cluster import ClusterRecord
+from gigi.indexing.loader import Chunk
+
 # (about_regex, summary_word_regex, document_word_regex) per language.
 _LANGUAGES = [
     # English
@@ -69,3 +72,26 @@ def is_overview_query(question: str) -> bool:
         if summary.search(q) and doc.search(q):
             return True
     return False
+
+
+def cluster_representatives(chunks: list[Chunk], clusters: list[ClusterRecord]) -> list[dict]:
+    """One representative chunk per topic cluster, with a coverage score (0..1).
+
+    Shared by the overview node (production) and the eval runner (offline), so
+    `gigi eval` measures exactly what `gigi ask` shows for overview questions.
+    """
+    n = max(len(chunks), 1)
+    retrieved: list[dict] = []
+    for cluster in clusters:
+        if cluster.centroid_idx < 0 or cluster.centroid_idx >= len(chunks):
+            continue
+        chunk = chunks[cluster.centroid_idx]
+        retrieved.append(
+            {
+                "source": chunk.source,
+                "text": chunk.text,
+                "heading": cluster.heading or "",
+                "score": cluster.size / n,
+            }
+        )
+    return retrieved

@@ -23,7 +23,7 @@ gigi ask "what are these documents about?"
   prose, English or Dutch in the docs)
   - Embeddings: `intfloat/multilingual-e5-small` (sentence-transformers; e5
     `query:` / `passage:` prefixes applied on each side, BGE instruction for `bge-*`)
-  - Reranker: `cross-encoder/mmarco-mMiniLMv2-L6-H384-v1` (multilingual CrossEncoder)
+  - Reranker: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (multilingual CrossEncoder; the L6 sibling is no longer public)
   - Top-k via cosine similarity + MMR, computed with `torch.matmul`
   - Spherical k-means over the index (`clusters.json`) for corpus-overview questions
     (detection speaks English, Italian, Spanish and Catalan)
@@ -100,6 +100,10 @@ gigi ask "what are these documents about?"
 
 # Inspect the index
 gigi status
+
+# Measure retrieval quality over the committed multilingual golden set (offline)
+gigi eval
+gigi eval --grid          # sweep retrieval knobs, show the best configs
 ```
 
 ## Configuration (env vars)
@@ -108,10 +112,11 @@ gigi status
 | --------------------- | ------------------------------------ | ------------------------------------ |
 | `GIGI_INDEX_DIR`      | `./.index` (in the current dir)      | Where the embedding index lives; one per directory |
 | `GIGI_EMBED_MODEL`    | `intfloat/multilingual-e5-small`    | Sentence-transformer for embeddings (multilingual) |
-| `GIGI_RERANK_MODEL`   | `cross-encoder/mmarco-mMiniLMv2-L6-H384-v1` | Multilingual cross-encoder reranker |
+| `GIGI_RERANK_MODEL`   | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Multilingual cross-encoder reranker |
 | `GIGI_RERANK`         | `1`                                  | Enable the reranker (`0` to disable) |
 | `GIGI_TOP_K`          | `16`                                 | Candidates retrieved before rerank   |
 | `GIGI_RERANK_TOP_K`   | `8`                                  | Candidates kept after rerank         |
+| `GIGI_MMR_LAMBDA`     | `0.7`                                | MMR diversity: 1 = pure relevance, 0 = pure diversity |
 | `GIGI_N_CLUSTERS`     | `16`                                 | Topic clusters built at index time   |
 | `GIGI_GRADE_THRESHOLD`| auto (off when rerank / `0.3` cosine)| Relevance cutoff; unset keeps reranked hits |
 | `GIGI_CHUNK_SIZE`     | `800`                                | Chunk size in characters             |
@@ -133,6 +138,39 @@ against an index built with another model and prints the rebuild command:
 ```bash
 gigi index .     # full rebuild; also bulk-downloads the new HF models on first run
 ```
+
+## Evaluation (`gigi eval`)
+
+`gigi eval` measures the retrieval stage with no LLM at all: it embeds the
+committed multilingual fixture corpus ([`src/gigi/eval/corpus/`](src/gigi/eval/corpus/),
+23 docs across en/it/es/ca) into a throwaway index, runs 20 golden questions
+([`src/gigi/eval/golden.py`](src/gigi/eval/golden.py)) through the same
+pipeline `ask` uses, and reports:
+
+| Metric | What it measures |
+| ------ | ---------------- |
+| `recall@8` | Is the answer's source retrieved at all (pre-grade candidates)? |
+| `mrr` | How high is the answer's source ranked (post-grade)? |
+| `answer-basis` | Is the top kept source the expected one? |
+| `bail rate` | How often nothing survives the relevance threshold? |
+| `overview cov` | What fraction of the corpus surfaces in cluster representatives? |
+| `score` | Weighted composite: `0.4·recall@8 + 0.3·mrr + 0.2·basis + 0.1·(1−bail)` for specific cases, `coverage` for overview cases |
+
+```bash
+gigi eval                 # baseline report, one line per golden question
+gigi eval --grid          # sweep top_k, rerank_top_k, rerank, grade, λ, n_clusters
+gigi eval --json          # machine-readable report
+gigi eval --min-score 0.8 # exit 1 when the baseline score drops below 0.8
+```
+
+The grid is fast because the cross-encoder scores every `(question, chunk)`
+pair once and each config only re-selects from those fixed scores. The
+chunking knobs (`GIGI_CHUNK_SIZE`/`_OVERLAP`) are intentionally excluded from
+the sweep — they change the index itself, mixing signals. First run downloads
+the two HF models (if not cached); afterwards everything is offline. A
+baseline of `~0.9` (16/16 specific cases perfect, coverage ~0.6) is expected
+on the fixture corpus — drop a knob below its default and you can watch the
+score fall.
 
 ## Tests
 

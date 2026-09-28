@@ -5,13 +5,12 @@ from __future__ import annotations
 import uuid
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from gigi.cpucompat import configure_cpu, configure_torch
 
 configure_cpu()
 
-import numpy as np
 import torch
 
 configure_torch(torch)
@@ -30,8 +29,8 @@ from gigi.agent.graph import build_graph, run_agent
 from gigi.agent.llm import LLMError, get_llm
 from gigi.agent.nodes import Services
 from gigi.config import Settings
+from gigi.indexing.build import build_index
 from gigi.indexing.embedder import Embedder
-from gigi.indexing.loader import load_documents
 from gigi.indexing.store import IndexStore
 from gigi.retrieval.rerank import Reranker
 
@@ -112,34 +111,34 @@ def index(
     if root is None:
         typer.secho("document directory required (or pass --recluster)", fg=typer.colors.RED)
         raise typer.Exit(1)
-    typer.echo(f"Scanning {root} for documents...")
-    chunks = load_documents(root, chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
-    if not chunks:
-        typer.secho(f"no supported documents found under {root}", fg=typer.colors.RED)
-        raise typer.Exit(1)
-    embedder = Embedder(settings.embed_model)
-    typer.echo(f"Found {len(chunks)} chunks; embedding with {settings.embed_model}...")
-    batch_size = settings.embed_batch_size
-    embedded = []
     progress = Progress(
         TextColumn("[bold blue]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
         TimeRemainingColumn(),
     )
+    task: Any = None
     with progress:
-        task = progress.add_task("Embedding", total=len(chunks))
-        for start in range(0, len(chunks), batch_size):
-            batch = chunks[start : start + batch_size]
-            embedded.append(embedder.encode_chunks([c.text for c in batch]))
-            progress.update(
-                task,
-                advance=len(batch),
-                description=f"Embedding {batch[-1].source}",
+
+        def on_scan(n: int) -> None:
+            nonlocal task
+            typer.echo(f"Found {n} chunks; embedding with {settings.embed_model}...")
+            task = progress.add_task("Embedding", total=n)
+
+        def on_batch(n: int, source: str) -> None:
+            progress.update(task, advance=n, description=f"Embedding {source}")
+
+        try:
+            store, manifest = build_index(
+                root,
+                settings,
+                index_dir=settings.index_dir,
+                on_scan=on_scan,
+                on_batch=on_batch,
             )
-    embeddings = torch.cat(embedded).cpu().numpy().astype(np.float32)
-    store.clear()
-    manifest = store.save(chunks, embeddings, settings.embed_model, n_clusters=settings.n_clusters)
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(1) from exc
     n_topics = len(store.load_clusters())
     typer.secho(
         f"Indexed {manifest.n_chunks} chunks ({manifest.dimension}-dim embeddings, "
@@ -215,6 +214,42 @@ def status() -> None:
         typer.echo("Top topics:")
         for cluster in clusters[:8]:
             typer.echo(f"  • {cluster.heading or cluster.source}  ({cluster.size} chunks)")
+
+
+@app.command("eval")
+def evaluate(
+    grid: Annotated[
+        bool,
+        typer.Option(
+            "--grid",
+            help="Sweep retrieval knobs (top_k, rerank, thresholds, MMR lambda, n_clusters) and list the best configs.",
+        ),
+    ] = False,
+    json_out: Annotated[
+        bool,
+        typer.Option("--json", help="Print the report as JSON instead of a table."),
+    ] = False,
+    min_score: Annotated[
+        float | None,
+        typer.Option(
+            "--min-score",
+            help="Exit with status 1 when the baseline score is below this value (0..1).",
+        ),
+    ] = None,
+) -> None:
+    """Measure retrieval quality against a committed golden set (offline, no LLM).
+
+    Builds a throwaway index from the multilingual fixture corpus, runs every
+    golden question through the same retrieval pipeline `ask` uses, and reports
+    recall@8, MRR, answer-basis rate, bail rate and overview coverage.
+    """
+    from gigi.eval.runner import format_report, run_eval, to_json
+
+    settings = Settings.from_env()
+    report = run_eval(settings, grid=grid)
+    typer.echo(to_json(report) if json_out else format_report(report))
+    if min_score is not None and report.baseline.score < min_score:
+        raise typer.Exit(1)
 
 
 @app.command()

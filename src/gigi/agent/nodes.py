@@ -8,7 +8,7 @@ from gigi.config import Settings
 from gigi.indexing.cluster import ClusterRecord, build_clusters
 from gigi.indexing.embedder import Embedder
 from gigi.indexing.store import IndexStore
-from gigi.retrieval.overview import is_overview_query
+from gigi.retrieval.overview import cluster_representatives, is_overview_query
 from gigi.retrieval.rerank import Reranker
 from gigi.retrieval.search import mmr_top_k
 
@@ -40,16 +40,7 @@ def _overview_chunks(services: Services, chunks, embeddings) -> list[dict]:
     clusters: list[ClusterRecord] = loader() if callable(loader) else []
     if not clusters:
         clusters = build_clusters(chunks, embeddings, n_clusters=services.settings.n_clusters)
-    n = max(len(chunks), 1)
-    retrieved = []
-    for cluster in clusters:
-        if cluster.centroid_idx < 0 or cluster.centroid_idx >= len(chunks):
-            continue
-        chunk = chunks[cluster.centroid_idx]
-        retrieved.append(
-            _chunk_dict(chunk.source, chunk.text, cluster.heading, cluster.size / n)
-        )
-    return retrieved
+    return cluster_representatives(chunks, clusters)
 
 
 def make_retrieve_node(services: Services):
@@ -68,7 +59,13 @@ def make_retrieve_node(services: Services):
             }
 
         query_emb = services.embedder.encode_one(state["question"])
-        candidates = mmr_top_k(chunks, embeddings, query_emb, k=services.settings.top_k)
+        candidates = mmr_top_k(
+            chunks,
+            embeddings,
+            query_emb,
+            k=services.settings.top_k,
+            lambda_=services.settings.mmr_lambda,
+        )
         if services.reranker is not None:
             reranked = services.reranker.rerank(
                 state["question"],
