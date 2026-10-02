@@ -53,3 +53,25 @@ def test_overview_coverage():
     assert m.overview_coverage([], {"a.md"}) == 0.0
     assert m.overview_coverage(["a.md"], set()) == 0.0
     assert m.overview_coverage(["a.md", "b.md"], {"a.md"}) == 1.0
+
+
+def test_bootstrap_ci_brackets_the_sample_mean():
+    values = list(range(1, 101))  # mean 50.5
+    lo, hi = m.bootstrap_ci(values, n_boot=2000, seed=0)
+    assert lo < 50.5 < hi
+    assert lo <= hi
+
+
+def test_bootstrap_ci_is_deterministic_for_a_seed():
+    values = [1.0, 2.0, 3.0, 100.0]
+    a = m.bootstrap_ci(values, n_boot=500, seed=7)
+    b = m.bootstrap_ci(values, n_boot=500, seed=7)
+    assert a == b
+
+
+def test_bootstrap_ci_constant_values_collapse_to_the_point():
+    assert m.bootstrap_ci([0.5, 0.5, 0.5], n_boot=100, seed=0) == (0.5, 0.5)
+
+
+def test_bootstrap_ci_empty_values():
+    assert m.bootstrap_ci([], n_boot=100, seed=0) == (0.0, 0.0)

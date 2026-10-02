@@ -269,17 +269,29 @@ def evaluate(
             help="Exit with status 1 when the baseline score is below this value (0..1).",
         ),
     ] = None,
+    bootstraps: Annotated[
+        int,
+        typer.Option(
+            "--bootstraps",
+            help="Bootstrap resamples for the 95% confidence intervals (0 disables CIs).",
+        ),
+    ] = 2000,
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="RNG seed for reproducible bootstrap CIs."),
+    ] = 0,
 ) -> None:
     """Measure retrieval quality against a committed golden set (offline, no LLM).
 
     Builds a throwaway index from the multilingual fixture corpus, runs every
     golden question through the same retrieval pipeline `ask` uses, and reports
-    recall@8, MRR, answer-basis rate, bail rate and overview coverage.
+    recall@8, MRR, answer-basis rate, bail rate and overview coverage — each
+    with a 95% percentile-bootstrap confidence interval over the cases.
     """
     from gigi.eval.runner import format_report, run_eval, to_json
 
     settings = Settings.from_env()
-    report = run_eval(settings, grid=grid)
+    report = run_eval(settings, grid=grid, n_boot=bootstraps, seed=seed)
     typer.echo(to_json(report) if json_out else format_report(report))
     if min_score is not None and report.baseline.score < min_score:
         raise typer.Exit(1)

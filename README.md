@@ -167,7 +167,19 @@ gigi eval                 # baseline report, one line per golden question
 gigi eval --grid          # sweep top_k, rerank_top_k, rerank, grade, λ, n_clusters
 gigi eval --json          # machine-readable report
 gigi eval --min-score 0.8 # exit 1 when the baseline score drops below 0.8
+gigi eval --bootstraps 0  # skip the confidence intervals
+gigi eval --seed 42       # other RNG seed for the CIs
 ```
+
+Every metric in the baseline report carries a 95% percentile-bootstrap
+confidence interval: the per-case values are resampled with replacement
+(`--bootstraps` times, default 2000) and the `alpha/2`–`1−alpha/2` percentiles
+of the resampled means are quoted as `[lo, hi]`. With only 20 golden cases the
+intervals are wide and coarse — that is the point: it reads as "score 0.824,
+95% CI [0.745, 0.900]" instead of a false-precise point estimate. The
+`--json` report carries the same intervals under `ci`; a fixed `--seed`
+(default 0) makes every run reproducible, and the grid table shows each
+config's score interval so near-ties stop looking like real differences.
 
 The grid is fast because the cross-encoder scores every `(question, chunk)`
 pair once and each config only re-selects from those fixed scores. The

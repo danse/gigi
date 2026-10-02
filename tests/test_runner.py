@@ -87,3 +87,51 @@ def test_evaluate_config_grade_threshold_none_keeps_everything():
     assert q.bail is False
     assert q.answer_basis == 1.0
     assert report.bail_rate == 0.0
+
+
+def test_evaluate_config_reports_bootstrap_ci_per_metric():
+    settings, chunks, clusters = _fixture()
+    cases = (
+        GoldenCase("q1", ("a.md",), "en", "specific"),
+        GoldenCase("q2", ("a.md",), "en", "specific"),
+        GoldenCase("q3", ("a.md",), "en", "specific"),
+        GoldenCase("overview", ("a.md", "b.md"), "en", "overview"),
+    )
+    stage = FakeStage(
+        {
+            "q1": [_retrieved_dict("a.md", 0.9)],
+            "q2": [_retrieved_dict("b.md", 0.9)],
+            "q3": [],
+        }
+    )
+
+    report = evaluate_config(
+        "test", settings, stage, store=None, chunks=chunks,
+        embeddings=None, cases=cases, clusters=clusters, n_boot=500, seed=3,
+    )
+
+    assert set(report.ci) == {
+        "score", "recall8", "mrr", "answer_basis", "bail_rate", "coverage",
+    }
+    for lo, hi in report.ci.values():
+        assert lo <= hi
+    assert report.n_boot == 500
+    assert report.seed == 3
+    # same inputs + same seed -> identical intervals
+    again = evaluate_config(
+        "test", settings, stage, store=None, chunks=chunks,
+        embeddings=None, cases=cases, clusters=clusters, n_boot=500, seed=3,
+    )
+    assert again.ci == report.ci
+
+
+def test_evaluate_config_disables_ci_with_zero_resamples():
+    settings, chunks, clusters = _fixture()
+    cases = (GoldenCase("q", ("a.md",), "en", "specific"),)
+    stage = FakeStage({"q": [_retrieved_dict("a.md", 0.9)]})
+
+    report = evaluate_config(
+        "test", settings, stage, store=None, chunks=chunks,
+        embeddings=None, cases=cases, clusters=clusters, n_boot=0,
+    )
+    assert report.ci is None

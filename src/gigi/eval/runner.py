@@ -25,7 +25,7 @@ from pathlib import Path
 
 from gigi.config import Settings
 from gigi.eval.golden import CORPUS_DIR, GOLDEN, GoldenCase
-from gigi.eval.metrics import mean, mrr, overview_coverage, recall_at_k
+from gigi.eval.metrics import bootstrap_ci, mean, mrr, overview_coverage, recall_at_k
 from gigi.indexing.build import build_index
 from gigi.indexing.cluster import ClusterRecord, build_clusters
 from gigi.indexing.embedder import Embedder
@@ -83,6 +83,10 @@ class ConfigReport:
     answer_basis: float
     bail_rate: float
     coverage: float
+    # Percentile-bootstrap 95% CIs per metric (None when `n_boot == 0`).
+    ci: dict[str, tuple[float, float]] | None = None
+    n_boot: int = 0
+    seed: int = 0
 
 
 @dataclass
@@ -173,6 +177,9 @@ def evaluate_config(
     embeddings,
     cases: tuple[GoldenCase, ...] = GOLDEN,
     clusters: list[ClusterRecord] | None = None,
+    *,
+    n_boot: int = 2000,
+    seed: int = 0,
 ) -> ConfigReport:
     if clusters is None:
         clusters = store.load_clusters()
@@ -225,12 +232,33 @@ def evaluate_config(
             )
         )
 
-    return _aggregate(label, settings, results)
+    return _aggregate(label, settings, results, n_boot=n_boot, seed=seed)
 
 
-def _aggregate(label: str, settings: Settings, results: list[CaseResult]) -> ConfigReport:
+def _aggregate(
+    label: str,
+    settings: Settings,
+    results: list[CaseResult],
+    *,
+    n_boot: int = 2000,
+    seed: int = 0,
+) -> ConfigReport:
     specific = [r for r in results if r.kind == "specific"]
     overview = [r for r in results if r.kind == "overview"]
+    ci = None
+    if n_boot > 0:
+        ci = {
+            "score": bootstrap_ci([r.score() for r in results], n_boot=n_boot, seed=seed),
+            "recall8": bootstrap_ci([r.recall8 for r in specific], n_boot=n_boot, seed=seed),
+            "mrr": bootstrap_ci([r.mrr for r in specific], n_boot=n_boot, seed=seed),
+            "answer_basis": bootstrap_ci(
+                [r.answer_basis for r in specific], n_boot=n_boot, seed=seed
+            ),
+            "bail_rate": bootstrap_ci(
+                [1.0 if r.bail else 0.0 for r in specific], n_boot=n_boot, seed=seed
+            ),
+            "coverage": bootstrap_ci([r.coverage for r in overview], n_boot=n_boot, seed=seed),
+        }
     return ConfigReport(
         label=label,
         settings=_knob_dict(settings),
@@ -241,6 +269,9 @@ def _aggregate(label: str, settings: Settings, results: list[CaseResult]) -> Con
         answer_basis=mean([r.answer_basis for r in specific]),
         bail_rate=mean([1.0 if r.bail else 0.0 for r in specific]),
         coverage=mean([r.coverage for r in overview]),
+        ci=ci,
+        n_boot=n_boot,
+        seed=seed,
     )
 
 
@@ -253,18 +284,31 @@ def _grid_label(params: dict) -> str:
     )
 
 
-def run_eval(settings: Settings | None = None, *, grid: bool = False) -> EvalReport:
+def run_eval(
+    settings: Settings | None = None,
+    *,
+    grid: bool = False,
+    n_boot: int = 2000,
+    seed: int = 0,
+) -> EvalReport:
     """Build a throwaway fixture index and score the golden set against it."""
     settings = settings or Settings.from_env()
     tmp_root = Path(tempfile.mkdtemp(prefix="gigi-eval-"))
     index_dir = tmp_root / ".index"
     try:
-        return _run_eval_in(settings, index_dir, grid=grid)
+        return _run_eval_in(settings, index_dir, grid=grid, n_boot=n_boot, seed=seed)
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)
 
 
-def _run_eval_in(settings: Settings, index_dir: Path, *, grid: bool) -> EvalReport:
+def _run_eval_in(
+    settings: Settings,
+    index_dir: Path,
+    *,
+    grid: bool,
+    n_boot: int = 2000,
+    seed: int = 0,
+) -> EvalReport:
     store, _manifest = build_index(CORPUS_DIR, settings, index_dir=index_dir)
     chunks, embeddings, _ = store.load()
     # the store records full paths as sources; the golden set uses bare file
@@ -281,7 +325,9 @@ def _run_eval_in(settings: Settings, index_dir: Path, *, grid: bool) -> EvalRepo
     )
     stage = RetrievalStage(embedder, reranker, chunks, embeddings, precomputed=precomputed)
 
-    baseline = evaluate_config("baseline", settings, stage, store, chunks, embeddings)
+    baseline = evaluate_config(
+        "baseline", settings, stage, store, chunks, embeddings, n_boot=n_boot, seed=seed
+    )
     if not grid:
         return EvalReport(baseline=baseline, grid=[])
 
@@ -303,6 +349,8 @@ def _run_eval_in(settings: Settings, index_dir: Path, *, grid: bool) -> EvalRepo
                 chunks,
                 embeddings,
                 clusters=cluster_cache[n_clusters],
+                n_boot=n_boot,
+                seed=seed,
             )
         )
     reports.sort(key=lambda r: r.score, reverse=True)
@@ -318,16 +366,28 @@ def format_report(report: EvalReport) -> str:
             "docs (en/it/es/ca) — offline, no LLM"
         ),
         "",
-        "baseline (default settings):",
-        f"  score        {baseline.score:.3f}",
-        f"  recall@8     {baseline.recall8:.3f}",
-        f"  mrr          {baseline.mrr:.3f}",
-        f"  answer-basis {baseline.answer_basis:.3f}",
-        f"  bail rate    {baseline.bail_rate:.3f}",
-        f"  overview cov {baseline.coverage:.3f}",
-        "",
-        "cases (specific):",
     ]
+    header = "baseline (default settings):"
+    if baseline.ci:
+        header += (
+            f"   [95% CI: {baseline.n_boot} bootstrap resamples, seed {baseline.seed}]"
+        )
+    lines.append(header)
+    for name, value, key in (
+        ("score", baseline.score, "score"),
+        ("recall@8", baseline.recall8, "recall8"),
+        ("mrr", baseline.mrr, "mrr"),
+        ("answer-basis", baseline.answer_basis, "answer_basis"),
+        ("bail rate", baseline.bail_rate, "bail_rate"),
+        ("overview cov", baseline.coverage, "coverage"),
+    ):
+        ci = baseline.ci.get(key) if baseline.ci else None
+        line = f"  {name:<13}{value:.3f}"
+        if ci:
+            line += f"  [{ci[0]:.3f}, {ci[1]:.3f}]"
+        lines.append(line)
+    lines.append("")
+    lines.append("cases (specific):")
     for case in baseline.cases:
         if case.kind != "specific":
             continue
@@ -348,15 +408,19 @@ def format_report(report: EvalReport) -> str:
             f"knob sweep — {len(report.grid)} configs "
             "(top_k × rerank_top_k × rerank × grade × λ × n_clusters), best first:"
         )
-        lines.append("   #   score  rec8   mrr    cov   config")
+        lines.append("   #   score  ci95                  rec8   mrr    cov   config")
         for i, config in enumerate(report.grid[:12], start=1):
+            ci = config.ci.get("score") if config.ci else None
+            ci95 = f"[{ci[0]:.3f}, {ci[1]:.3f}]" if ci else "n/a"
             lines.append(
-                f"  {i:>2}  {config.score:.3f} {config.recall8:.3f} {config.mrr:.3f} "
-                f"{config.coverage:.3f}  {config.label}"
+                f"  {i:>2}  {config.score:.3f}  {ci95:<18}{config.recall8:.3f} "
+                f"{config.mrr:.3f} {config.coverage:.3f}  {config.label}"
             )
+        bci = baseline.ci.get("score") if baseline.ci else None
+        bci95 = f"[{bci[0]:.3f}, {bci[1]:.3f}]" if bci else "n/a"
         lines.append(
-            f"  -   {baseline.score:.3f} {baseline.recall8:.3f} {baseline.mrr:.3f} "
-            f"{baseline.coverage:.3f}  baseline"
+            f"  -   {baseline.score:.3f}  {bci95:<18}{baseline.recall8:.3f} "
+            f"{baseline.mrr:.3f} {baseline.coverage:.3f}  baseline"
         )
     return "\n".join(lines)
 
