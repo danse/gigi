@@ -3,9 +3,11 @@
 Local document Q&A assistant built on **PyTorch** + **LangGraph**.
 
 Ask questions over a folder of documents. A pretrained PyTorch sentence-transformer
-embeds your docs and query, torch does cosine-similarity retrieval, a PyTorch
-cross-encoder reranks the candidates, and a LangGraph agent retrieves → grades →
-generates a grounded answer (with a self-correction loop) via a local Ollama LLM.
+embeds your docs and query, torch does cosine-similarity retrieval (optional
+cross-encoder reranking is off by default — the eval grid showed it demotes the
+right document on needle questions; enable with `GIGI_RERANK=1`), and a LangGraph
+agent retrieves → grades → generates a grounded answer (with a self-correction
+loop) via a local Ollama LLM.
 
 `gigi index` also clusters the embeddings into topics. `gigi summarise` uses those
 clusters' representative passages — several per topic — instead of
@@ -23,7 +25,10 @@ gigi summarise               # summarize the corpus via its topic clusters
   prose, English or Dutch in the docs)
   - Embeddings: `intfloat/multilingual-e5-small` (sentence-transformers; e5
     `query:` / `passage:` prefixes applied on each side, BGE instruction for `bge-*`)
-  - Reranker: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (multilingual CrossEncoder; the L6 sibling is no longer public)
+  - Reranker: `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (multilingual
+    CrossEncoder; the L6 sibling is no longer public) — *off by default*, kept
+    for `GIGI_RERANK=1` (the `--grid` sweep shows it hurting mmr/basis on the
+    fixture corpus)
   - Top-k via cosine similarity + MMR, computed with `torch.matmul`
   - Spherical k-means over the index (`clusters.json`, with per-cluster member
     chunks) for `gigi summarise` — each topic contributes its nearest passages,
@@ -113,14 +118,14 @@ gigi eval --grid          # sweep retrieval knobs, show the best configs
 | --------------------- | ------------------------------------ | ------------------------------------ |
 | `GIGI_INDEX_DIR`      | `./.index` (in the current dir)      | Where the embedding index lives; one per directory |
 | `GIGI_EMBED_MODEL`    | `intfloat/multilingual-e5-small`    | Sentence-transformer for embeddings (multilingual) |
-| `GIGI_RERANK_MODEL`   | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Multilingual cross-encoder reranker |
-| `GIGI_RERANK`         | `1`                                  | Enable the reranker (`0` to disable) |
-| `GIGI_TOP_K`          | `16`                                 | Candidates retrieved before rerank   |
-| `GIGI_RERANK_TOP_K`   | `8`                                  | Candidates kept after rerank         |
+| `GIGI_RERANK_MODEL`   | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Multilingual cross-encoder reranker (only loaded when enabled) |
+| `GIGI_RERANK`         | `0`                                  | Enable the reranker (`1`); off by default — the eval grid showed it demoting the correct document on the fixture |
+| `GIGI_TOP_K`          | `16`                                 | Candidates retrieved by MMR, fed to the LLM |
+| `GIGI_RERANK_TOP_K`   | `8`                                  | Candidates kept after rerank (only when `GIGI_RERANK=1`) |
 | `GIGI_MMR_LAMBDA`     | `0.7`                                | MMR diversity: 1 = pure relevance, 0 = pure diversity |
 | `GIGI_N_CLUSTERS`     | `16`                                 | Topic clusters built at index time   |
 | `GIGI_OVERVIEW_PER_CLUSTER` | `2`                           | Passages per topic fed to `gigi summarise` |
-| `GIGI_GRADE_THRESHOLD`| auto (off when rerank / `0.3` cosine)| Relevance cutoff; unset keeps reranked hits |
+| `GIGI_GRADE_THRESHOLD`| auto (`0.3` cosine with no reranker; off when reranking) | Relevance cutoff for the kept candidates |
 | `GIGI_CHUNK_SIZE`     | `800`                                | Chunk size in characters             |
 | `GIGI_CHUNK_OVERLAP`  | `100`                                | Chunk overlap in characters          |
 | `GIGI_EMBED_BATCH_SIZE`| `32`                                 | Chunks embedded per progress step   |
@@ -185,10 +190,12 @@ The grid is fast because the cross-encoder scores every `(question, chunk)`
 pair once and each config only re-selects from those fixed scores. The
 chunking knobs (`GIGI_CHUNK_SIZE`/`_OVERLAP`) are intentionally excluded from
 the sweep — they change the index itself, mixing signals. First run downloads
-the two HF models (if not cached); afterwards everything is offline. A
-baseline of `~0.9` (16/16 specific cases perfect, coverage ~0.6) is expected
-on the fixture corpus — drop a knob below its default and you can watch the
-score fall.
+the two HF models (if not cached); afterwards everything is offline. The
+shipped defaults were tuned with `--grid`: reranking is **off by default**
+because the sweep showed the cross-encoder demoting the correct document on
+this fixture (mean mrr 1.000 off vs 0.644 on, answer-basis 1.000 vs 0.604,
+bail 0.228 on). The baseline with the tuned defaults is ~0.965 — 16/16
+specific cases perfect, overview coverage ~0.83.
 
 ## Tests
 

@@ -18,3 +18,6 @@ this file only records things an agent cannot discover directly from the code.
   re-embed) to light that up — until then summaries use one passage per topic.
 - Graph convention: conditional edges own control flow; nodes are
   single-purpose.
+- The retrieval defaults (reranker off, `top_k=16`, `mmr_lambda=0.7`,
+  `n_clusters=16`) were tuned with `gigi eval --grid` on the fixture corpus —
+  the sweep had reranking hurting mrr/basis. Re-tune deliberately, not by hand.

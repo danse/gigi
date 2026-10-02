@@ -23,7 +23,7 @@ class Settings:
     index_dir: Path = Path.cwd() / ".index"
     embed_model: str = "intfloat/multilingual-e5-small"
     rerank_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
-    rerank_enabled: bool = True
+    rerank_enabled: bool = False
     top_k: int = 16
     rerank_top_k: int = 8
     mmr_lambda: float = 0.7
