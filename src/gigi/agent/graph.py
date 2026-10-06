@@ -22,13 +22,9 @@ GENERATE = "generate"
 GENERATE_OVERVIEW = "generate_overview"
 
 
-def _retry_or_end(node: str, max_attempts: int):
-    def route(state: dict) -> str:
-        if not state["grounded"] and state.get("attempt", 0) < max_attempts:
-            return node
-        return END
-
-    return route
+def after_generate(state: dict) -> str:
+    """Empty/refused output goes to the no-answer node; everything else ends."""
+    return NO_ANSWER if state.get("degenerate") else END
 
 
 def route_after_retrieve(state: dict) -> str:
@@ -58,16 +54,17 @@ def build_graph(services: Services, checkpointer: BaseCheckpointSaver | None = N
         {GENERATE: GENERATE, NO_ANSWER: NO_ANSWER},
     )
 
-    max_attempts = services.settings.max_attempts
+    # Linear pipeline: a single generation per turn. Empty or refused output is
+    # routed to the no-answer node, never re-generated.
     builder.add_conditional_edges(
         GENERATE,
-        _retry_or_end(GENERATE, max_attempts),
-        {GENERATE: GENERATE, END: END},
+        after_generate,
+        {NO_ANSWER: NO_ANSWER, END: END},
     )
     builder.add_conditional_edges(
         GENERATE_OVERVIEW,
-        _retry_or_end(GENERATE_OVERVIEW, max_attempts),
-        {GENERATE_OVERVIEW: GENERATE_OVERVIEW, END: END},
+        after_generate,
+        {NO_ANSWER: NO_ANSWER, END: END},
     )
     builder.add_edge(NO_ANSWER, END)
 

@@ -6,8 +6,8 @@ Ask questions over a folder of documents. A pretrained PyTorch sentence-transfor
 embeds your docs and query, torch does cosine-similarity retrieval (optional
 cross-encoder reranking is off by default — the eval grid showed it demotes the
 right document on needle questions; enable with `GIGI_RERANK=1`), and a LangGraph
-agent retrieves → grades → generates a grounded answer (with a self-correction
-loop) via a local Ollama LLM.
+agent retrieves → grades → generates an answer via a local Ollama LLM (one
+generation per turn; no LLM-side "grounding" verification layer).
 
 `gigi index` also clusters the embeddings into topics. `gigi summarise` uses those
 clusters' representative passages — several per topic — instead of
@@ -38,10 +38,14 @@ gigi summarise               # summarize the corpus via its topic clusters
     `gigi summarise` takes that branch) to `generate_overview` (per-topic
     representative passages) and everything else through `grade → generate`.
     Grade bails out to a "no answer" node when nothing clears the relevance
-    threshold. Generate retries (max `GIGI_MAX_ATTEMPTS`) when grounding fails.
-  - Consecutive `gigi ask` calls continue the conversation: grounded Q&A pairs
-    are stored in a SQLite checkpointer under `GIGI_INDEX_DIR` (`checkpoints.sqlite`,
-    thread id in `thread_id`), and replayed into the prompt. `--reset` starts over.
+    threshold, and `generate` routes there too when the output is empty or the
+    canonical refusal (`"I don't know."`). Otherwise answers are accepted
+    as-is: the cosine grade is the only relevance gate, and the source list
+    printed under every answer is there for the human to verify.
+  - Consecutive `gigi ask` calls continue the conversation: question/answer
+    turns are stored in a SQLite checkpointer under `GIGI_INDEX_DIR`
+    (`checkpoints.sqlite`, thread id in `thread_id`), and replayed into the
+    prompt. `--reset` starts over. Declined turns are never remembered.
 - **Pluggable LLM** (`src/gigi/agent/llm.py`): Ollama (default), any
   OpenAI-compatible endpoint, or an offline stub for tests.
 
@@ -133,7 +137,6 @@ gigi eval --grid          # sweep retrieval knobs, show the best configs
 | `GIGI_OLLAMA_URL`     | `http://localhost:11434`             | Ollama server                        |
 | `GIGI_OLLAMA_MODEL`   | `gemma3:270m`                       | Ollama model                         |
 | `GIGI_OPENAI_URL/API_KEY/MODEL` | —                          | For OpenAI-compatible endpoints      |
-| `GIGI_MAX_ATTEMPTS`   | `2`                                  | Max self-correction retries          |
 | `GIGI_LLM_TIMEOUT`    | `1800`                               | LLM HTTP read timeout in seconds (`0` waits forever) |
 
 To try the pipeline without Ollama: `GIGI_LLM=stub gigi ask "..."`.

@@ -1,4 +1,4 @@
-"""Prompt templates for grounded answer generation."""
+"""Prompt templates for answer generation."""
 
 from __future__ import annotations
 
@@ -49,7 +49,6 @@ def format_history(history: list[dict], max_messages: int = 8) -> list[dict]:
 def build_messages(
     question: str,
     chunks: list[dict],
-    refine: bool = False,
     overview: bool = False,
     history: list[dict] | None = None,
 ) -> list[dict]:
@@ -64,11 +63,6 @@ def build_messages(
         )
     else:
         user = f"Context:\n{format_context(chunks)}\n\nQuestion: {question}"
-    if refine:
-        user = (
-            "Your previous answer was not grounded in the context. "
-            "Answer again using only the context.\n\n" + user
-        )
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(format_history(history or []))
     messages.append({"role": "user", "content": user})

@@ -55,7 +55,7 @@ class _RecordingLLM(StubLLM):
 
 def _make_services(llm) -> Services:
     return Services(
-        settings=Settings(rerank_enabled=False, max_attempts=2),
+        settings=Settings(rerank_enabled=False),
         store=_Store(),
         embedder=_Embedder(),
         llm=llm,

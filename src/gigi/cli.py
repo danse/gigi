@@ -27,7 +27,7 @@ from rich.progress import (
 from gigi import __version__
 from gigi.agent.graph import build_graph, run_agent
 from gigi.agent.llm import LLMError, get_llm
-from gigi.agent.nodes import Services
+from gigi.agent.nodes import NO_ANSWER_MESSAGE, Services
 from gigi.config import Settings
 from gigi.indexing.build import build_index
 from gigi.indexing.embedder import Embedder
@@ -153,7 +153,7 @@ def index(
 
 def _show_result(result: dict) -> None:
     """Print an agent result (answer + sources) the same way for every command."""
-    if not result.get("relevant"):
+    if result.get("answer") == NO_ANSWER_MESSAGE:
         typer.secho(result["answer"], fg=typer.colors.YELLOW)
         raise typer.Exit(1)
 

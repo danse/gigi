@@ -10,7 +10,6 @@ class GraphState(TypedDict, total=False):
     retrieved: list[dict]
     relevant: list[dict]
     answer: str
-    grounded: bool
-    attempt: int
+    degenerate: bool
     overview: bool
     history: list[dict]

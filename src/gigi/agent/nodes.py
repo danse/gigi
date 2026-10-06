@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from gigi.agent.llm import LLM
+
+NO_ANSWER_MESSAGE = "No reliable answer found in the indexed documents."
 from gigi.agent.prompts import build_messages
 from gigi.config import Settings
 from gigi.indexing.cluster import ClusterRecord, build_clusters
@@ -49,7 +51,7 @@ def make_retrieve_node(services: Services):
     def retrieve(state: dict) -> dict:
         chunks, embeddings, _ = services.store.load()
         # Fresh turn: forget per-question fields left by the previous turn.
-        base = {"attempt": 0, "grounded": False, "answer": ""}
+        base = {"answer": ""}
         if state.get("overview", False):
             representatives = _overview_chunks(services, chunks, embeddings)
             return {
@@ -96,43 +98,44 @@ def make_grade_node(settings: Settings):
 
 def make_no_answer_node():
     def no_answer(state: dict) -> dict:
-        return {
-            "answer": "No relevant context found in the indexed documents.",
-            "grounded": False,
-        }
+        return {"answer": NO_ANSWER_MESSAGE}
 
     return no_answer
 
 
-def _is_grounded(answer: str) -> bool:
-    lowered = (answer or "").lower()
-    return bool(answer.strip()) and "i don't know" not in lowered
+def _is_degenerate(answer: str) -> bool:
+    """Empty output, or the canonical refusal the prompt instructs (verbatim).
+
+    This is deliberately *not* a grounding/verification layer: any other output
+    is accepted as-is, and the grade threshold is the only relevance gate
+    (retrieval-side). A refusal cannot be reliably recognised past this exact
+    string, so we do not try — the sources shown under each answer belong to
+    the human to verify.
+    """
+    text = (answer or "").strip()
+    if not text:
+        return True
+    return text.rstrip(".").lower() == "i don't know"
 
 
 def make_generate_node(services: Services, *, overview: bool = False):
     def generate(state: dict) -> dict:
-        refine = state.get("attempt", 0) > 0
         messages = build_messages(
             state["question"],
             state["relevant"],
-            refine=refine,
             overview=overview,
             history=state.get("history") or [],
         )
         answer = services.llm.complete(messages)
-        result: dict = {
-            "answer": answer,
-            "grounded": _is_grounded(answer),
-            "attempt": state.get("attempt", 0) + 1,
-        }
-        if result["grounded"]:
-            # Only grounded turns join the conversation history, so a failed
-            # attempt (possibly repeated by self-correction) is never stored.
-            turn = [
+        result: dict = {"answer": answer, "degenerate": _is_degenerate(answer)}
+        if not result["degenerate"]:
+            # Every real turn joins the conversation history; only output that
+            # routes to the no-answer node (empty/refused) is not remembered,
+            # so a decline is never replayed as trusted context.
+            result["history"] = (state.get("history") or []) + [
                 {"role": "user", "content": state["question"]},
                 {"role": "assistant", "content": answer},
             ]
-            result["history"] = (state.get("history") or []) + turn
         return result
 
     return generate

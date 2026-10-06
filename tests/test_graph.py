@@ -16,7 +16,7 @@ from gigi.agent.graph import (
     run_agent,
 )
 from gigi.agent.llm import StubLLM
-from gigi.agent.nodes import Services
+from gigi.agent.nodes import NO_ANSWER_MESSAGE, Services
 from gigi.config import Settings
 from gigi.indexing.cluster import ClusterRecord
 from gigi.indexing.loader import Chunk
@@ -60,8 +60,8 @@ class FakeEmbedder:
         return torch.tensor(self._query, dtype=torch.float32)
 
 
-class FlakyLLM(StubLLM):
-    """Returns an ungrounded answer once, then a grounded answer."""
+class RefusingLLM(StubLLM):
+    """Returns the canonical refusal every time."""
 
     def __init__(self):
         super().__init__()
@@ -69,9 +69,19 @@ class FlakyLLM(StubLLM):
 
     def complete(self, messages):
         self.calls += 1
-        if self.calls == 1:
-            return "I don't know."
-        return "The deployment uses the deploy.sh script."
+        return "I don't know."
+
+
+class EmptyLLM(StubLLM):
+    """Returns an empty answer every time."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def complete(self, messages):
+        self.calls += 1
+        return ""
 
 
 class RecordingLLM(StubLLM):
@@ -87,7 +97,7 @@ class RecordingLLM(StubLLM):
 
 
 def make_services(query: list[float], llm=None) -> Services:
-    settings = Settings(rerank_enabled=False, max_attempts=2)
+    settings = Settings(rerank_enabled=False)
     return Services(
         settings=settings,
         store=FakeStore(),
@@ -103,13 +113,13 @@ def test_route_after_retrieve_branches_on_overview():
     assert route_after_retrieve({"overview": False, "retrieved": [{"text": "x"}]}) == "grade"
 
 
-def test_graph_answers_grounded_question():
+def test_graph_answers_question():
     services = make_services([1.0, 0.0])
     graph = build_graph(services)
     result = run_agent(graph, "How do I deploy to production?")
     assert result["relevant"], "expected matching chunk to be graded relevant"
     assert result["relevant"][0]["source"] == "deployment.md"
-    assert result["grounded"] is True
+    assert result["degenerate"] is False
     assert result["answer"]
 
 
@@ -118,19 +128,26 @@ def test_graph_bails_out_when_nothing_relevant():
     graph = build_graph(services)
     result = run_agent(graph, "What color is the sky on mars?")
     assert result["relevant"] == []
-    assert "No relevant context" in result["answer"]
-    assert result["grounded"] is False
+    assert result["answer"] == NO_ANSWER_MESSAGE
 
 
-def test_graph_retries_when_answer_not_grounded():
-    llm = FlakyLLM()
+def test_graph_canonical_refusal_routes_to_no_answer():
+    llm = RefusingLLM()
     services = make_services([1.0, 0.0], llm=llm)
     graph = build_graph(services)
     result = run_agent(graph, "How do I deploy?")
-    assert llm.calls == 2, "expected exactly one self-correction retry"
-    assert result["attempt"] == 2
-    assert result["grounded"] is True
-    assert "deploy.sh" in result["answer"]
+    assert llm.calls == 1, "a refused answer is never re-generated"
+    assert result["degenerate"] is True
+    assert result["answer"] == NO_ANSWER_MESSAGE
+
+
+def test_graph_empty_answer_routes_to_no_answer():
+    llm = EmptyLLM()
+    services = make_services([1.0, 0.0], llm=llm)
+    graph = build_graph(services)
+    result = run_agent(graph, "How do I deploy?")
+    assert llm.calls == 1
+    assert result["answer"] == NO_ANSWER_MESSAGE
 
 
 def test_graph_overview_uses_cluster_representatives():
@@ -155,7 +172,7 @@ def test_graph_plain_question_never_routes_to_overview():
 
 def test_rerank_keeps_hits_below_old_logit_threshold():
     services = Services(
-        settings=Settings(rerank_enabled=True, max_attempts=1),
+        settings=Settings(rerank_enabled=True),
         store=FakeStore(),
         embedder=FakeEmbedder([1.0, 0.0]),
         llm=StubLLM(),
@@ -182,16 +199,12 @@ def test_conversation_memory_carries_across_asks(tmp_path):
     # First "process": ask turn 1.
     graph1 = build_graph(services, checkpointer=_saver(db))
     first = run_agent(graph1, "How do I deploy to production?", thread_id="t1")
-    assert first["attempt"] == 1
-    assert first["grounded"] is True
     assert len(first["history"]) == 2
 
     # Second "process": a fresh graph + fresh connection on the same checkpoint
     # file must still see turn 1's history.
     graph2 = build_graph(services, checkpointer=_saver(db))
     second = run_agent(graph2, "And how do I roll it back?", thread_id="t1")
-    assert second["attempt"] == 1, "per-turn fields like attempt must reset between asks"
-    assert second["grounded"] is True
     assert len(second["history"]) == 4
 
     last_call = llm.calls[-1]
@@ -214,13 +227,12 @@ def test_new_thread_starts_with_empty_history(tmp_path):
     assert _roles(llm.calls[-1]) == ["system", "user"]
 
 
-def test_ungrounded_retry_is_not_stored_in_history(tmp_path):
-    llm = FlakyLLM()
+def test_degenerate_turn_is_not_stored_in_history(tmp_path):
+    llm = RefusingLLM()
     graph = build_graph(
         make_services([1.0, 0.0], llm=llm),
         checkpointer=_saver(tmp_path / "ckpt.sqlite"),
     )
     result = run_agent(graph, "How do I deploy?", thread_id="t")
-    assert llm.calls == 2
-    assert result["attempt"] == 2
-    assert len(result["history"]) == 2, "only the grounded turn should be remembered"
+    assert llm.calls == 1
+    assert "history" not in result, "a declined turn must never be remembered"

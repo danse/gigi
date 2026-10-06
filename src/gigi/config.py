@@ -39,7 +39,6 @@ class Settings:
     openai_url: str = ""
     openai_api_key: str = ""
     openai_model: str = ""
-    max_attempts: int = 2
     llm_timeout: float = 1800.0
 
     def resolve_grade_threshold(self) -> float | None:
@@ -78,6 +77,5 @@ class Settings:
             openai_url=os.environ.get("GIGI_OPENAI_URL", cls.openai_url),
             openai_api_key=os.environ.get("GIGI_OPENAI_API_KEY", cls.openai_api_key),
             openai_model=os.environ.get("GIGI_OPENAI_MODEL", cls.openai_model),
-            max_attempts=int(os.environ.get("GIGI_MAX_ATTEMPTS", cls.max_attempts)),
             llm_timeout=float(os.environ.get("GIGI_LLM_TIMEOUT", cls.llm_timeout)),
         )
