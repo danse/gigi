@@ -204,10 +204,17 @@ chunking knobs (`GIGI_CHUNK_SIZE`/`_OVERLAP`) are intentionally excluded from
 the sweep — they change the index itself, mixing signals. First run downloads
 the two HF models (if not cached); afterwards everything is offline. The
 shipped defaults were tuned with `--grid`: reranking is **off by default**
-because the sweep showed the cross-encoder demoting the correct document on
-this fixture (mean mrr 1.000 off vs 0.644 on, answer-basis 1.000 vs 0.604,
-bail 0.228 on). The baseline with the tuned defaults is ~0.965 — 16/16
-specific cases perfect, overview coverage ~0.83.
+because the cross-encoder demotes the correct document on this fixture
+(mean mrr 1.000 off vs 0.644 on, answer-basis 1.000 vs 0.604, bail 0.228 on
+across each 288-config half). The paired bootstrap confirms that flip with no
+overlap ambiguity: at the old default knobs (top=16 rrk=8 λ=0.7 cl=16)
+rerank-on scores 0.868 vs 0.965 off, and its paired score-difference CI is
+[+0.065, +0.206] with p = P(best > config) = 1.00 — a `worse` verdict, not a
+marginal near-tie. No rerank-on config in the sweep reaches 0.965; the rare
+ones that merely `tie` the best do so through the `cl=24` coverage artifact of
+a 28-chunk fixture (coverage 0.826 → 1.000 at 24 clusters), which is why the
+default stays at `cl=16` with a ~0.965 baseline — 16/16 specific cases
+perfect, overview coverage ~0.83.
 
 ## Tests
 
