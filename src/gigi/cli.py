@@ -286,7 +286,10 @@ def evaluate(
     Builds a throwaway index from the multilingual fixture corpus, runs every
     golden question through the same retrieval pipeline `ask` uses, and reports
     recall@8, MRR, answer-basis rate, bail rate and overview coverage — each
-    with a 95% percentile-bootstrap confidence interval over the cases.
+    with a 95% percentile-bootstrap confidence interval over the cases. In
+    `--grid` mode every config is additionally compared against the best with a
+    paired bootstrap (one shared resample plan): the table quotes the CI of the
+    score difference and a `worse`/`tie` verdict.
     """
     from gigi.eval.runner import format_report, run_eval, to_json
 

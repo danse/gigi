@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from gigi.config import Settings
 from gigi.eval.golden import GoldenCase
-from gigi.eval.runner import evaluate_config
+from gigi.eval.runner import _add_pairwise, evaluate_config
 from gigi.indexing.cluster import ClusterRecord
 from gigi.indexing.loader import Chunk
 
@@ -135,3 +135,85 @@ def test_evaluate_config_disables_ci_with_zero_resamples():
         embeddings=None, cases=cases, clusters=clusters, n_boot=0,
     )
     assert report.ci is None
+
+
+def test_add_pairwise_attaches_paired_cis_against_reference():
+    settings, chunks, clusters = _fixture()
+    cases = (
+        GoldenCase("q1", ("a.md",), "en", "specific"),
+        GoldenCase("q2", ("a.md",), "en", "specific"),
+        GoldenCase("q3", ("a.md",), "en", "specific"),
+        GoldenCase("overview", ("a.md", "b.md"), "en", "overview"),
+    )
+    good = FakeStage(
+        {
+            "q1": [_retrieved_dict("a.md", 0.9)],
+            "q2": [_retrieved_dict("a.md", 0.9)],
+            "q3": [_retrieved_dict("a.md", 0.9)],
+        }
+    )
+    bad = FakeStage(
+        {
+            "q1": [_retrieved_dict("b.md", 0.9)],
+            "q2": [_retrieved_dict("b.md", 0.9)],
+            "q3": [_retrieved_dict("b.md", 0.9)],
+        }
+    )
+    ref = evaluate_config(
+        "ref", settings, good, store=None, chunks=chunks,
+        embeddings=None, cases=cases, clusters=clusters, n_boot=0,
+    )
+    other = evaluate_config(
+        "other", settings, bad, store=None, chunks=chunks,
+        embeddings=None, cases=cases, clusters=clusters, n_boot=0,
+    )
+
+    _add_pairwise(ref, [other], n_boot=500, seed=0)
+
+    assert other.pairwise is not None
+    assert other.pairwise.ref == "ref"
+    assert set(other.pairwise.ci) == {
+        "score", "recall8", "mrr", "answer_basis", "bail_rate", "coverage",
+    }
+    assert set(other.pairwise.p_beat) == set(other.pairwise.ci)
+    for metric in ("score", "recall8", "mrr", "answer_basis"):
+        lo, hi = other.pairwise.ci[metric]
+        assert lo <= hi
+        assert lo > 0, f"reference must strictly beat {metric}"
+    # overview coverage comes from the same clusters for both configs: a tie.
+    assert other.pairwise.ci["coverage"] == (0.0, 0.0)
+    assert other.pairwise.p_beat["coverage"] == 0.0
+    assert other.pairwise.p_beat["score"] > 0.5
+
+    # the reference itself keeps no pairwise record, and n_boot == 0 disables it
+    assert ref.pairwise is None
+    before = other.pairwise.ci["score"]
+    _add_pairwise(ref, [other], n_boot=0, seed=0)
+    assert other.pairwise.ci["score"] == before, "n_boot == 0 must leave existing records untouched"
+    untouched = evaluate_config(
+        "untouched", settings, bad, store=None, chunks=chunks,
+        embeddings=None, cases=cases, clusters=clusters, n_boot=0,
+    )
+    _add_pairwise(ref, [untouched], n_boot=0, seed=0)
+    assert untouched.pairwise is None
+
+
+def test_add_pairwise_identical_config_is_a_perfect_tie():
+    settings, chunks, clusters = _fixture()
+    cases = (GoldenCase("q", ("a.md",), "en", "specific"),)
+    stage = FakeStage({"q": [_retrieved_dict("a.md", 0.9)]})
+    ref = evaluate_config(
+        "same", settings, stage, store=None, chunks=chunks,
+        embeddings=None, cases=cases, clusters=clusters, n_boot=0,
+    )
+    clone = evaluate_config(
+        "same", settings, stage, store=None, chunks=chunks,
+        embeddings=None, cases=cases, clusters=clusters, n_boot=0,
+    )
+
+    _add_pairwise(ref, [clone], n_boot=500, seed=0)
+
+    assert clone.pairwise is not None
+    assert clone.pairwise.ci["score"] == (0.0, 0.0)
+    assert clone.pairwise.p_beat["score"] == 0.0
+    assert clone.pairwise.p_beat["recall8"] == 0.0

@@ -75,3 +75,50 @@ def test_bootstrap_ci_constant_values_collapse_to_the_point():
 
 def test_bootstrap_ci_empty_values():
     assert m.bootstrap_ci([], n_boot=100, seed=0) == (0.0, 0.0)
+
+
+def test_make_resample_plan_is_deterministic_and_shared():
+    a = m.make_resample_plan(16, 100, seed=0)
+    b = m.make_resample_plan(16, 100, seed=0)
+    assert a.shape == (100, 16)
+    assert (a == b).all()
+    assert a.min() >= 0 and a.max() < 16
+
+
+def test_bootstrap_ci_accepts_a_shared_plan():
+    values = [1.0, 2.0, 3.0, 100.0]
+    plan = m.make_resample_plan(4, 500, seed=7)
+    # Passing the explicit plan is equivalent to drawing it internally.
+    assert m.bootstrap_ci(values, n_boot=500, seed=7) == m.bootstrap_ci(
+        values, n_boot=500, seed=7, plan=plan
+    )
+
+
+def test_bootstrap_diff_ci_separated_values_exclude_zero():
+    a = [1.0] * 20
+    b = [0.0] * 20
+    plan = m.make_resample_plan(20, 2000, seed=0)
+    lo, hi, p = m.bootstrap_diff_ci(a, b, plan)
+    assert lo > 0 and hi > 0, "a strictly better config must exclude 0"
+    assert p == 1.0
+
+
+def test_bootstrap_diff_ci_identical_values_are_a_perfect_tie():
+    a = [1.0, 2.0, 3.0] * 7
+    plan = m.make_resample_plan(21, 500, seed=0)
+    lo, hi, p = m.bootstrap_diff_ci(a, a, plan)
+    assert (lo, hi) == (0.0, 0.0), "identical vectors give a zero difference"
+    assert p == 0.0
+
+
+def test_bootstrap_diff_ci_shares_the_case_draw_per_iteration():
+    # The pairing matters: values are jointly resampled, so a config whose per-
+    # case values mirror the reference but with a constant shift is detected
+    # exactly, where independent resamples could oscillate around zero.
+    a = [round(0.1 * i, 6) for i in range(20)]
+    b = [round(0.1 * i + 0.5, 6) for i in range(20)]
+    plan = m.make_resample_plan(20, 2000, seed=0)
+    lo, hi, p = m.bootstrap_diff_ci(a, a, plan)
+    assert (lo, hi, p) == (0.0, 0.0, 0.0)
+    lo2, hi2, p2 = m.bootstrap_diff_ci(b, a, plan)
+    assert lo2 > 0 and hi2 > 0 and p2 == 1.0

@@ -186,8 +186,17 @@ of the resampled means are quoted as `[lo, hi]`. With only 20 golden cases the
 intervals are wide and coarse — that is the point: it reads as "score 0.824,
 95% CI [0.745, 0.900]" instead of a false-precise point estimate. The
 `--json` report carries the same intervals under `ci`; a fixed `--seed`
-(default 0) makes every run reproducible, and the grid table shows each
-config's score interval so near-ties stop looking like real differences.
+(default 0) makes every run reproducible.
+
+The grid table goes one step further: overlapping marginals are *not* a
+verdict, so every config is compared against the best with a **paired**
+bootstrap. One resample plan over case indices is drawn per metric and shared
+by all configs (case *i* is jointly drawn or jointly excluded everywhere), and
+the table quotes the 95% CI of `mean(best) − mean(config)` on the score plus
+`p = P(best > config)`. The verdict column says `worse` when that difference
+CI excludes 0, `tie` otherwise. The same paired comparison is attached to the
+baseline row, so "does the tuned default beat the old one?" is read directly
+(`--json` carries it under `pairwise`).
 
 The grid is fast because the cross-encoder scores every `(question, chunk)`
 pair once and each config only re-selects from those fixed scores. The

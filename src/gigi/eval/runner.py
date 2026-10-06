@@ -23,9 +23,19 @@ import tempfile
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
+import numpy as np
+
 from gigi.config import Settings
 from gigi.eval.golden import CORPUS_DIR, GOLDEN, GoldenCase
-from gigi.eval.metrics import bootstrap_ci, mean, mrr, overview_coverage, recall_at_k
+from gigi.eval.metrics import (
+    bootstrap_ci,
+    bootstrap_diff_ci,
+    make_resample_plan,
+    mean,
+    mrr,
+    overview_coverage,
+    recall_at_k,
+)
 from gigi.indexing.build import build_index
 from gigi.indexing.cluster import ClusterRecord, build_clusters
 from gigi.indexing.embedder import Embedder
@@ -73,6 +83,21 @@ class CaseResult:
 
 
 @dataclass
+class Pairwise:
+    """Paired bootstrap comparison of this config against a reference config.
+
+    ``ci[m]`` is the 95% CI of ``mean(reference) - mean(self)`` on metric ``m``,
+    computed from one shared resample plan over case indices (per-iteration
+    pairing). ``p_beat[m]`` is the fraction of resamples where the reference
+    beat this config (≈ 0.5 on a tie, 1.0 when it strictly dominates).
+    """
+
+    ref: str
+    ci: dict[str, tuple[float, float]]
+    p_beat: dict[str, float]
+
+
+@dataclass
 class ConfigReport:
     label: str
     settings: dict
@@ -87,6 +112,9 @@ class ConfigReport:
     ci: dict[str, tuple[float, float]] | None = None
     n_boot: int = 0
     seed: int = 0
+    # Paired comparison vs the grid's best config (None when `n_boot == 0` or
+    # this config *is* the reference).
+    pairwise: Pairwise | None = None
 
 
 @dataclass
@@ -284,6 +312,54 @@ def _grid_label(params: dict) -> str:
     )
 
 
+_PAIRWISE_METRICS = ("score", "recall8", "mrr", "answer_basis", "bail_rate", "coverage")
+
+
+def _metric_values(report: ConfigReport, metric: str) -> list[float]:
+    """Per-case values for one report metric (the input to the bootstrap)."""
+    if metric == "score":
+        return [r.score() for r in report.cases]
+    if metric == "coverage":
+        return [r.coverage for r in report.cases if r.kind == "overview"]
+    if metric == "bail_rate":
+        return [1.0 if r.bail else 0.0 for r in report.cases if r.kind == "specific"]
+    return [getattr(r, metric) for r in report.cases if r.kind == "specific"]
+
+
+def _add_pairwise(
+    reference: ConfigReport,
+    others: list[ConfigReport],
+    *,
+    n_boot: int,
+    seed: int,
+) -> None:
+    """Attach a shared-plan paired bootstrap CI vs *reference* to every config.
+
+    One ``make_resample_plan`` per metric (one per per-metric case set) is
+    drawn once and fed to every config, so each bootstrap iteration resamples
+    the *same* cases for the reference and the compared config. The paired
+    difference CI — not the overlap of two marginal CIs — is the verdict.
+    """
+    if n_boot <= 0:
+        return
+    ref_values = {
+        m: np.asarray(_metric_values(reference, m), dtype=np.float64)
+        for m in _PAIRWISE_METRICS
+    }
+    plans = {m: make_resample_plan(ref_values[m].size, n_boot, seed) for m in _PAIRWISE_METRICS}
+    for other in others:
+        ci: dict[str, tuple[float, float]] = {}
+        p_beat: dict[str, float] = {}
+        for m in _PAIRWISE_METRICS:
+            if ref_values[m].size == 0:
+                # No cases of this kind in the eval: the metric is undefined.
+                continue
+            lo, hi, p = bootstrap_diff_ci(ref_values[m], _metric_values(other, m), plans[m])
+            ci[m] = (lo, hi)
+            p_beat[m] = p
+        other.pairwise = Pairwise(ref=reference.label, ci=ci, p_beat=p_beat)
+
+
 def run_eval(
     settings: Settings | None = None,
     *,
@@ -354,6 +430,8 @@ def _run_eval_in(
             )
         )
     reports.sort(key=lambda r: r.score, reverse=True)
+    if reports:
+        _add_pairwise(reports[0], [*reports[1:], baseline], n_boot=n_boot, seed=seed)
     return EvalReport(baseline=baseline, grid=reports)
 
 
@@ -408,19 +486,45 @@ def format_report(report: EvalReport) -> str:
             f"knob sweep — {len(report.grid)} configs "
             "(top_k × rerank_top_k × rerank × grade × λ × n_clusters), best first:"
         )
-        lines.append("   #   score  ci95                  rec8   mrr    cov   config")
+        lines.append(
+            "Δ vs best = paired 95% CI of (best score − config score) on one shared "
+            "resample plan; p = P(best > config); verdict 'worse' ⇔ CI excludes 0."
+        )
+        lines.append("   #   score  ci95              Δ vs best      p     ver   rec8   mrr    cov   config")
         for i, config in enumerate(report.grid[:12], start=1):
             ci = config.ci.get("score") if config.ci else None
             ci95 = f"[{ci[0]:.3f}, {ci[1]:.3f}]" if ci else "n/a"
+            if config.pairwise is not None:
+                lo, hi = config.pairwise.ci["score"]
+                p = config.pairwise.p_beat["score"]
+                delta = f"[{lo:+.3f},{hi:+.3f}]"
+                pstr = f"{p:.2f}"
+                verdict = "worse" if lo > 0 or hi < 0 else "tie"
+            else:
+                delta = "—"
+                pstr = "—"
+                verdict = "best"
             lines.append(
-                f"  {i:>2}  {config.score:.3f}  {ci95:<18}{config.recall8:.3f} "
-                f"{config.mrr:.3f} {config.coverage:.3f}  {config.label}"
+                f"  {i:>2}  {config.score:.3f}  {ci95:<15}{delta:<16}{pstr:<5}"
+                f"{verdict:<5}{config.recall8:.3f} {config.mrr:.3f} "
+                f"{config.coverage:.3f}  {config.label}"
             )
         bci = baseline.ci.get("score") if baseline.ci else None
         bci95 = f"[{bci[0]:.3f}, {bci[1]:.3f}]" if bci else "n/a"
+        if baseline.pairwise is not None:
+            lo, hi = baseline.pairwise.ci["score"]
+            p = baseline.pairwise.p_beat["score"]
+            bdelta = f"[{lo:+.3f},{hi:+.3f}]"
+            bpstr = f"{p:.2f}"
+            bverdict = "worse" if lo > 0 or hi < 0 else "tie"
+        else:
+            bdelta = "—"
+            bpstr = "—"
+            bverdict = "—"
         lines.append(
-            f"  -   {baseline.score:.3f}  {bci95:<18}{baseline.recall8:.3f} "
-            f"{baseline.mrr:.3f} {baseline.coverage:.3f}  baseline"
+            f"  -   {baseline.score:.3f}  {bci95:<15}{bdelta:<16}{bpstr:<5}"
+            f"{bverdict:<5}{baseline.recall8:.3f} {baseline.mrr:.3f} "
+            f"{baseline.coverage:.3f}  baseline"
         )
     return "\n".join(lines)
 
